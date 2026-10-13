@@ -111,8 +111,8 @@ def brief(provider: dict, kind: str, data: str, tz: str) -> str:
     message = chat_completion(provider, [
         {"role": "system", "content": BRIEF_PROMPT.format(tz=tz)},
         {"role": "user", "content": f"{BRIEF_TASKS[kind]}\n\nDATA:\n{data[:14000]}"},
-    ], max_tokens=900)
-    return _clean(message.get("content")) or "(The model returned an empty answer.)"
+    ], max_tokens=BRIEF_TOKENS)
+    return _clean(message.get("content")) or EMPTY_ANSWER
 
 
 NO_TOOLS_NOTE = """
@@ -123,6 +123,14 @@ when it is not enough.
 
 SNAPSHOT:
 {snapshot}"""
+
+
+# Reasoning models spend output tokens on thinking before they write anything, so the limit has
+# to leave room for both; a short limit comes back as an empty answer.
+BRIEF_TOKENS = 4000
+MAX_RETRY_TOKENS = 12000
+EMPTY_ANSWER = ("(The model used up its whole answer allowance on reasoning and wrote nothing. Try again, or choose a "
+                "model that reasons less under AI providers.)")
 
 
 class AIError(Exception):
@@ -188,9 +196,15 @@ def chat_completion(provider: dict, messages: list[dict], tool_specs: list[dict]
     if resp.status_code >= 400:
         raise AIError(f"HTTP {resp.status_code} from model endpoint: {_error_text(resp)}", resp.status_code)
     try:
-        return resp.json()["choices"][0]["message"]
+        choice = resp.json()["choices"][0]
+        message = choice["message"]
     except (ValueError, KeyError, IndexError, TypeError) as exc:
         raise AIError("Model endpoint returned an unexpected response shape") from exc
+    # Cut off while still thinking: nothing was written, so ask once more with room to finish.
+    if (choice.get("finish_reason") == "length" and not _clean(message.get("content")) and not message.get("tool_calls")
+            and max_tokens < MAX_RETRY_TOKENS):
+        return chat_completion(provider, messages, tool_specs, MAX_RETRY_TOKENS)
+    return message
 
 
 def test_provider(provider: dict) -> dict:
@@ -301,7 +315,7 @@ def investigate_steps(conn, provider: dict, history: list[dict], actor: str, tz_
             raise
         calls = msg.get("tool_calls") or []
         if not calls or not tools_supported or not budget_left:
-            yield {"type": "final", "reply": _clean(msg.get("content")) or "(The model returned an empty answer.)",
+            yield {"type": "final", "reply": _clean(msg.get("content")) or EMPTY_ANSWER,
                    "trace": trace, "tools_supported": tools_supported, "model": provider["model"]}
             return
 

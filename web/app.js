@@ -80,6 +80,11 @@
     layers: 'M12 4l9 5-9 5-9-5zM3 14l9 5 9-5',
     shield: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM12 8v5M12 16v.5',
     external: 'M14 4h6v6M20 4l-9 9M18 14v6H4V6h6',
+    chart: 'M4 20V4M4 20h16M8 16l4-5 3 3 5-7',
+    database: 'M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6',
+    globe: 'M12 21a9 9 0 100-18 9 9 0 000 18zM3 12h18M12 3c2.5 2.5 3.6 5.5 3.6 9s-1.1 6.5-3.600 9c-2.5-2.5-3.6-5.5-3.600-9s1.100-6.500 3.600-9z',
+    cpu: 'M7 7h10v10H7zM10 10h4v4h-4zM9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4',
+    gauge: 'M4 16a8 8 0 1116 0M12 16l4-5M12 16v.5',
   };
   const icon = (name, size = 18) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.700" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
 
@@ -345,8 +350,12 @@
 
   // The application chosen in the navbar: null means "All applications", the normal CERBERUS menu.
   const activeApp = () => state.apps.find((a) => a.id === pref.get('app', 'all')) || null;
+  // Product logo on a white tile so it reads in both themes; the corner dot shows whether it is connected.
+  const appLogo = (a, dot = true) => `<span class="app-logo"><img src="${esc(a.logo)}" alt="" width="18" height="18">${dot ? `<i class="${a.connected ? 'on' : 'off'}" title="${a.connected ? 'Connected' : 'Not connected yet'}"></i>` : ''}</span>`;
+  const appButton = () => { const a = activeApp(); return `${a && a.logo ? appLogo(a, false) : icon('grid', 16)}<span id="app-name">${esc(a ? a.name : 'All applications')}</span>${icon('chevron', 13)}`; };
   const NAV_BADGES = { incidents: 1, watch: 1, approvals: 1 };
-  const navLink = (id, href, text, ic) => `<a href="${esc(href)}" data-nav="${esc(id)}" data-tip="${esc(text)}" aria-label="${esc(text)}">${icon(ICONS[ic] ? ic : 'list')}<span>${esc(text)}</span>${
+  const navLink = (id, href, text, ic, tint) => `<a href="${esc(href)}" data-nav="${esc(id)}" data-tip="${esc(text)}" aria-label="${esc(text)}">${
+    tint ? `<i class="nav-ico" style="--c:var(--cat-${Number(tint) || 1})">${icon(ICONS[ic] ? ic : 'chart', 15)}</i>` : icon(ICONS[ic] ? ic : 'list')}<span>${esc(text)}</span>${
     NAV_BADGES[id] ? `<span class="count" data-badge="${id}" hidden></span>` : ''}</a>`;
   const navGroup = (key, label, links) => {
     const closed = closedGroups().includes(key);
@@ -360,10 +369,10 @@
       return NAV.map(([label, items]) => [label, items.filter((item) => !item[3] || isAdmin())]).filter(([, items]) => items.length)
         .map(([label, items]) => { const links = items.map(([id, text, ic]) => navLink(id, `#/${id}`, text, ic)).join(''); return label ? navGroup(label, label, links) : links; }).join('');
     }
-    const head = `<div class="nav-app"><span class="dot ${a.connected ? 'on' : 'off'}"></span><div><b>${esc(a.name)}</b><small>${esc(a.connected ? a.about : 'Not connected yet')}</small></div>
+    const head = `<div class="nav-app">${a.logo ? appLogo(a) : `<span class="dot ${a.connected ? 'on' : 'off'}"></span>`}<div><b>${esc(a.name)}</b><small>${esc(a.connected ? a.about : 'Not connected yet')}</small></div>
       <button type="button" class="btn sm ghost" data-action="app-pick" data-value="all" title="Back to everything in CERBERUS">All</button></div>`;
     return head + a.menu.map((g) => {
-      const links = g.items.map((it) => (it.id ? navLink(`app/${a.id}/${it.id}`, `#/app/${a.id}/${it.id}`, it.label, it.icon)
+      const links = g.items.map((it) => (it.id ? navLink(`app/${a.id}/${it.id}`, `#/app/${a.id}/${it.id}`, it.label, it.icon, it.tint)
         : navLink(it.route.replace(/^#\//, '').split(/[/?]/)[0], it.route, it.label, it.icon))).join('');
       return g.label ? navGroup(`${a.id}:${g.label}`, g.label, links) : links;
     }).join('');
@@ -372,8 +381,8 @@
     const cur = activeApp() ? activeApp().id : 'all';
     const item = (id, name, about, mark) => `<button class="menu-item app-item ${id === cur ? 'on' : ''}" data-action="app-pick" data-value="${esc(id)}">
       ${mark}<span class="app-text"><b>${esc(name)}</b><small>${esc(about)}</small></span></button>`;
-    return `<div class="muted small pop-title">Show the menu of</div>${item('all', 'All applications', 'Everything in CERBERUS', icon('grid', 16))}
-      ${state.apps.map((a) => item(a.id, a.name, a.connected ? a.about : 'Not connected yet', `<span class="dot ${a.connected ? 'on' : 'off'}"></span>`)).join('')}
+    return `<div class="muted small pop-title">Show the menu of</div>${item('all', 'All applications', 'Everything in CERBERUS', `<span class="app-logo plain">${icon('grid', 16)}</span>`)}
+      ${state.apps.map((a) => item(a.id, a.name, a.connected ? a.about : 'Not connected yet', a.logo ? appLogo(a) : `<span class="dot ${a.connected ? 'on' : 'off'}"></span>`)).join('')}
       ${isAdmin() ? `<div class="menu-sep"></div><a class="menu-item" href="#/integrations">${icon('plus', 16)}<span>Connect an application</span></a>` : ''}`;
   }
   const markNav = () => document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === state.navKey));
@@ -381,7 +390,7 @@
     if (!$('.shell')) return;
     $('.nav').innerHTML = navHtml();
     $('#app-pop').innerHTML = switcherHtml();
-    $('#app-name').textContent = activeApp() ? activeApp().name : 'All applications';
+    $('.app-btn').innerHTML = appButton();
     markNav();
   }
   async function loadApps() {
@@ -421,7 +430,7 @@
         <div class="main">
           <header class="topbar">
             <button class="btn ghost icon menu-btn" data-action="drawer" title="Show or hide the sidebar (Ctrl+B)" aria-label="Toggle sidebar">${icon('menu')}</button>
-            <div class="pop-wrap"><button class="btn ghost app-btn" data-action="menu" title="Choose which application's menu to show" aria-label="Choose application">${icon('grid', 16)}<span id="app-name">${esc(activeApp() ? activeApp().name : 'All applications')}</span>${icon('chevron', 13)}</button>
+            <div class="pop-wrap"><button class="btn ghost app-btn" data-action="menu" title="Choose which application's menu to show" aria-label="Choose application">${appButton()}</button>
               <div class="pop menu left" id="app-pop" hidden>${switcherHtml()}</div></div>
             <span class="top-title" id="top-title"></span>
             <span class="spacer"></span>
@@ -1002,21 +1011,143 @@
     return { html, mount: () => sevChart('events-volume', buckets, per, keep) };
   };
 
+  // ---------- values with units, and line charts, for application dashboards ----------
+
+  const sig = (v) => { const a = Math.abs(v); const s = a >= 100 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : a >= 1 ? v.toFixed(2) : a === 0 ? '0' : String(Number(v.toPrecision(2))); return s.includes('.') && !s.includes('e') ? s.replace(/\.?0+$/, '') : s; };
+  const scaled = (v, base, units) => { let i = 0; let n = Math.abs(v); while (n >= base && i < units.length - 1) { n /= base; i += 1; } return `${v < 0 ? '-' : ''}${sig(n)}${units[i]}`; };
+  function fmtUnit(v, unit) {
+    if (v === null || v === undefined || Number.isNaN(v)) return '—';
+    const a = Math.abs(v);
+    switch (unit) {
+      case 'percent': return `${sig(v)}%`;
+      case 'percentunit': return `${sig(v * 100)}%`;
+      case 'bytes': return scaled(v, 1024, [' B', ' KiB', ' MiB', ' GiB', ' TiB', ' PiB']);
+      case 'decbytes': return scaled(v, 1000, [' B', ' kB', ' MB', ' GB', ' TB', ' PB']);
+      case 'Bps': case 'binBps': return scaled(v, 1024, [' B/s', ' KiB/s', ' MiB/s', ' GiB/s', ' TiB/s']);
+      case 'bps': case 'binbps': return scaled(v, 1000, [' b/s', ' kb/s', ' Mb/s', ' Gb/s', ' Tb/s']);
+      case 'ms': return fmtUnit(v / 1000, 's');
+      case 's': case 'dtdurations':
+        if (a === 0) return '0 s';
+        if (a < 1e-3) return `${sig(v * 1e6)} µs`;
+        if (a < 1) return `${sig(v * 1000)} ms`;
+        if (a < 60) return `${sig(v)} s`;
+        if (a < 3600) return `${sig(v / 60)} min`;
+        if (a < 86400) return `${sig(v / 3600)} h`;
+        return `${sig(v / 86400)} days`;
+      case 'd': return `${sig(v)} days`;
+      case 'ops': case 'reqps': return `${scaled(v, 1000, ['', ' K', ' M', ' B'])} /s`;
+      case 'iops': return `${scaled(v, 1000, ['', ' K', ' M'])} io/s`;
+      case 'hertz': return scaled(v, 1000, [' Hz', ' kHz', ' MHz', ' GHz']);
+      default: return scaled(v, 1000, ['', ' K', ' M', ' B', ' T']);
+    }
+  }
+
+  const lineBlocks = new Map();
+  const catColor = (i) => `var(--cat-${(i % 8) + 1})`;
+  function drawLines(el) {
+    const b = lineBlocks.get(el.dataset.chart);
+    if (!b) return;
+    const W = Math.max(260, el.clientWidth); const H = Math.max(140, el.clientHeight || 196); const L = 62; const R = 10; const T = 10; const B = 24;
+    const n = Math.max(2, ...b.series.map((s) => s.v.length));
+    let lo = Infinity; let hi = -Infinity;
+    b.series.forEach((s) => s.v.forEach((v) => { if (v !== null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }));
+    if (!Number.isFinite(lo)) { el.innerHTML = '<div class="lc-empty muted small">No data in this period</div>'; el.onmousemove = null; return; }
+    if (lo > 0) lo = 0;
+    if (hi <= lo) hi = lo + 1;
+    hi = lo + (hi - lo) * 1.06;
+    const x = (i) => L + (i / (n - 1)) * (W - L - R);
+    const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+    const path = (s) => {
+      let d = ''; let pen = false;
+      s.v.forEach((v, i) => {
+        if (v === null) { pen = false; return; }
+        // A lone point between gaps still needs to be visible.
+        const alone = !pen && (i + 1 >= s.v.length || s.v[i + 1] === null);
+        d += alone ? `M${(x(i) - 1).toFixed(1)} ${y(v).toFixed(1)}h2` : `${pen ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`;
+        pen = true;
+      });
+      return d;
+    };
+    const span = b.step * (n - 1);
+    const when = (ms) => (span > 36 * 3600e3 ? `${new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric' })} ${clock(ms)}` : clock(ms));
+    const grid = [0, 1 / 3, 2 / 3, 1].map((f) => { const v = lo + ((hi - lo) / 1.06) * f; const yy = y(v).toFixed(1);
+      return `<line class="lc-grid" x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}"/><text class="lc-axis" x="${L - 8}" y="${yy}" dy="4" text-anchor="end">${esc(fmtUnit(v, b.unit))}</text>`; }).join('');
+    const ticks = [0, Math.round((n - 1) / 2), n - 1].map((i, k) => `<text class="lc-axis" x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="${k === 0 ? 'start' : k === 2 ? 'end' : 'middle'}">${esc(when(b.start + i * b.step))}</text>`).join('');
+    el.innerHTML = `<svg width="${W}" height="${H}" role="img" aria-label="${esc(b.title)}">${grid}${ticks}
+      ${b.fill && b.series[0] ? `<path class="lc-area" d="${path(b.series[0])}L${x(b.series[0].v.length - 1).toFixed(1)} ${y(lo).toFixed(1)}L${x(0).toFixed(1)} ${y(lo).toFixed(1)}Z" style="fill:${catColor(0)}"/>` : ''}
+      ${b.series.map((s, i) => `<path class="lc-line" d="${path(s)}" style="stroke:${catColor(i)}"/>`).join('')}
+      <line class="lc-guide" y1="${T}" y2="${H - B}" x1="0" x2="0" visibility="hidden"/></svg><div class="lc-tip" hidden></div>`;
+    const guide = $('.lc-guide', el); const tip = $('.lc-tip', el);
+    el.onmousemove = (e) => {
+      const box = el.getBoundingClientRect();
+      const i = Math.max(0, Math.min(n - 1, Math.round(((e.clientX - box.left - L) / (W - L - R)) * (n - 1))));
+      const rows = b.series.map((s, k) => ({ name: s.name, v: s.v[i], k })).filter((r) => r.v !== null && r.v !== undefined).sort((p, q) => q.v - p.v);
+      guide.setAttribute('x1', x(i)); guide.setAttribute('x2', x(i)); guide.setAttribute('visibility', 'visible');
+      tip.innerHTML = `<b>${esc(when(b.start + i * b.step))}</b>${rows.slice(0, 8).map((r) => `<div><i style="background:${catColor(r.k)}"></i><span>${esc(r.name)}</span><strong>${esc(fmtUnit(r.v, b.unit))}</strong></div>`).join('')
+        || '<div class="muted">No data</div>'}${rows.length > 8 ? `<div class="muted">and ${rows.length - 8} more</div>` : ''}`;
+      tip.hidden = false;
+      const left = x(i) + 14 + tip.offsetWidth > W ? x(i) - 14 - tip.offsetWidth : x(i) + 14;
+      tip.style.left = `${Math.max(0, left)}px`;
+    };
+    el.onmouseleave = () => { guide.setAttribute('visibility', 'hidden'); tip.hidden = true; };
+  }
+  const drawAllLines = () => document.querySelectorAll('.lchart').forEach(drawLines);
+  let lineResize;
+  window.addEventListener('resize', () => { clearTimeout(lineResize); lineResize = setTimeout(drawAllLines, 150); });
+  const appLines = (b, id) => {
+    lineBlocks.set(id, b);
+    return `<div class="card card-pad lc-card ${b.wide ? 'wide' : ''}"><h2>${esc(b.title)}</h2><div class="lchart" data-chart="${id}"></div>
+      ${!b.fill && (b.series.length > 1 || (b.series[0] && b.series[0].name !== b.title)) ? `<div class="lc-legend">${b.series.map((s, i) => `<span title="${esc(s.name)}"><i style="background:${catColor(i)}"></i>${esc(s.name)}</span>`).join('')}</div>` : ''}
+      ${b.note ? `<p class="muted small" style="margin:8px 0 0">${esc(b.note)}</p>` : ''}</div>`;
+  };
+
+  // ---------- dashboards laid out as in the original: panels keep their place on a 24-column grid ----------
+
+  const TONE_VAR = { critical: 'var(--bad)', high: 'var(--high)', medium: 'var(--warn)', ok: 'var(--ok)' };
+  const tintIcon = (name, tint, size = 18, cls = '') => `<i class="nav-ico ${cls}" style="--c:var(--cat-${Number(tint) || 1})">${icon(ICONS[name] ? name : 'chart', size)}</i>`;
+  const dashTiles = (b) => `<div class="card dtiles">${b.items.map((t) => `<div class="dtile t-${esc(t.tone)}" title="${esc(t.label)}">
+    <span>${esc(t.label)}</span><b>${typeof t.value === 'number' ? esc(fmtUnit(t.value, t.unit)) : esc(t.value)}</b>${t.hint ? `<small>${esc(t.hint)}</small>` : ''}</div>`).join('')}</div>`;
+  const dashGauge = (b) => {
+    const has = typeof b.value === 'number';
+    const part = has ? Math.max(0, Math.min(1, (b.value - b.min) / ((b.max - b.min) || 1))) : 0;
+    const arc = 'M12 62A48 48 0 0 1 108 62'; const len = 150.8;
+    return `<div class="card dgauge" title="${esc(b.title)}"><span>${esc(b.title)}</span>
+      <svg viewBox="0 0 120 70" role="img" aria-label="${esc(b.title)}"><path class="dg-track" d="${arc}"/>
+        <path class="dg-fill" d="${arc}" style="stroke:${TONE_VAR[b.tone] || 'var(--accent)'};stroke-dasharray:${(part * len).toFixed(1)} ${len}"/>
+        <text x="60" y="60" text-anchor="middle">${esc(has ? fmtUnit(b.value, b.unit) : 'No data')}</text></svg></div>`;
+  };
+  const dashBars = (b) => {
+    const max = b.max || Math.max(0, ...b.items.map((i) => i.value)) || 1;
+    return `<div class="card dbars"><span class="dtitle">${esc(b.title)}</span>${b.items.length ? b.items.map((i) => `<div class="dbar">
+      <div><span>${esc(i.label)}</span><b>${esc(fmtUnit(i.value, b.unit))}</b></div>
+      <i><u style="width:${i.value > 0 ? Math.max(2, Math.min(100, (i.value / max) * 100)) : 0}%;background:${i.tone !== 'ok' && TONE_VAR[i.tone] ? TONE_VAR[i.tone] : 'var(--series-1)'}"></u></i></div>`).join('')
+    : `<div class="muted small">${esc(b.empty)}</div>`}</div>`;
+  };
+  const dashGrid = (blocks) => `<div class="dash-grid">${blocks.map((b, i) => {
+    const w = b.w || 24;
+    const html = b.type === 'tiles' ? dashTiles(b) : b.type === 'gauge' ? dashGauge(b) : b.type === 'bars' ? dashBars(b)
+      : b.type === 'lines' ? appLines(b, `lc${i}`) : `<div class="card dtable">${appTable(b, false)}</div>`;
+    return `<div class="dcell ${w <= 4 ? 'd2' : w <= 6 ? 'd3' : w <= 8 ? 'd4' : w <= 12 ? 'd6' : 'd12'} dk-${esc(b.type)}" style="grid-column:${(b.x || 0) + 1} / span ${w};grid-row:${(b.y || 0) + 1} / span ${b.h || 8}">${html}</div>`;
+  }).join('')}</div>`;
+
   // ---------- application workspaces: one screen draws every page the server describes ----------
 
   const TONE_BAR = { critical: 'sev-critical', high: 'sev-high', medium: 'sev-medium', low: 'sev-low' };
   const outLink = (url, inner, cls = 'link') => `<a class="${cls}" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${inner}</a>`;
   const appTile = (t) => {
     const numeric = typeof t.value === 'number';
-    const inner = `<div><b class="raw ${numeric ? '' : 'stat-text'}">${numeric ? t.value.toLocaleString() : esc(t.value)}</b><span>${esc(t.label)}${t.hint ? ` <small>· ${esc(t.hint)}</small>` : ''}</span></div>`;
+    const shown = !numeric ? esc(t.value) : t.unit !== undefined ? esc(fmtUnit(t.value, t.unit)) : t.value.toLocaleString();
+    const meter = typeof t.meter === 'number' ? `<i class="tmeter"><u style="width:${Math.max(0, Math.min(100, t.meter * 100)).toFixed(1)}%"></u></i>` : '';
+    const inner = `${t.icon && ICONS[t.icon] ? `<div class="ico">${icon(t.icon, 20)}</div>` : ''}<div class="grow"><b class="raw ${numeric ? '' : 'stat-text'}">${shown}</b><span>${esc(t.label)}${t.hint ? ` <small title="${esc(t.hint)}">· ${esc(t.hint)}</small>` : ''}</span>${meter}</div>`;
     return t.href ? `<a class="card stat t-${esc(t.tone)}" href="${esc(t.href)}">${inner}</a>` : `<div class="card stat still t-${esc(t.tone)}">${inner}</div>`;
   };
   const appBars = (b) => {
-    const max = Math.max(1, ...b.items.map((i) => i.value));
-    return `<div class="card card-pad"><h2>${esc(b.title)}</h2><div class="hbars wide">${b.items.length ? b.items.map((i) => `
-      <${i.href ? `a href="${esc(i.href)}"` : 'div'} class="hbar" title="${esc(i.label)}: ${i.value.toLocaleString()}"><span class="hbar-label">${esc(i.label)}</span>
+    const max = Math.max(0, ...b.items.map((i) => i.value)) || 1;
+    const show = (v) => (b.unit !== undefined ? fmtUnit(v, b.unit) : fmtNum(v));
+    return `<div class="card card-pad ${b.wide ? 'wide' : ''}"><h2>${esc(b.title)}</h2><div class="hbars wide">${b.items.length ? b.items.map((i) => `
+      <${i.href ? `a href="${esc(i.href)}"` : 'div'} class="hbar" title="${esc(i.label)}: ${esc(b.unit !== undefined ? show(i.value) : i.value.toLocaleString())}"><span class="hbar-label">${esc(i.label)}</span>
         <span class="hbar-track"><span class="hbar-fill ${TONE_BAR[i.tone] || 'series'}" style="width:${i.value ? Math.max(2, (i.value / max) * 100) : 0}%"></span></span>
-        <span class="hbar-val">${fmtNum(i.value)}</span></${i.href ? 'a' : 'div'}>`).join('') : `<div class="muted small" style="padding:6px 0">${esc(b.empty)}</div>`}</div></div>`;
+        <span class="hbar-val">${esc(show(i.value))}</span></${i.href ? 'a' : 'div'}>`).join('') : `<div class="muted small" style="padding:6px 0">${esc(b.empty)}</div>`}</div></div>`;
   };
   const appTrend = (b) => {
     const pts = b.points;
@@ -1028,8 +1159,10 @@
       <div class="trend">${pts.map((p) => `<span class="trend-col" title="${fmtTime(p.t)} · ${p.v.toLocaleString()}"><i style="height:${p.v ? Math.max(3, (p.v / max) * 100) : 0}%"></i></span>`).join('')}</div>
       <div class="trend-axis"><span>${fmtTime(pts[0].t)}</span><span>${fmtTime(pts[pts.length - 1].t)}</span></div></div>`;
   };
-  const appCell = (c, r, first) => {
+  const appCell = (c, r, first, unit) => {
     const v = r[c.key];
+    if (c.kind === 'unit') return `<td class="nowrap" data-v="${Number(v) || 0}">${esc(fmtUnit(v, unit))}</td>`;
+    if (c.kind === 'log') return `<td class="wrap"><div class="logcell">${esc(v || '')}</div></td>`;
     if (c.kind === 'time') return v ? `<td class="nowrap" data-v="${Date.parse(v) || 0}">${agoCell(v)}</td>` : '<td data-v="0">—</td>';
     if (c.kind === 'badge') return `<td>${v && v.text ? `<span class="badge ${esc(v.tone)}">${esc(v.text)}</span>` : ''}</td>`;
     if (c.kind === 'num') return `<td data-v="${Number(v) || 0}">${typeof v === 'number' ? v.toLocaleString() : esc(v ?? '')}</td>`;
@@ -1037,13 +1170,21 @@
     const url = first && !r._detail && safeUrl(r._url);
     return `<td class="${c.kind === 'mono' ? 'mono brk' : c.kind === 'wrap' ? 'wrap' : 'nowrap'}">${url ? outLink(url, `${text} ${icon('external', 13)}`) : text}</td>`;
   };
-  const appTable = (b) => {
+  const appSegments = (b) => {
+    const total = b.items.reduce((n, i) => n + i.value, 0);
+    const colour = (i) => TONE_VAR[i.tone] || (i.tone === 'low' ? 'var(--sev-low)' : i.tone === 'info' ? 'var(--info)' : 'var(--line-strong)');
+    return `<div class="card card-pad wide segs"><div class="section-head" style="margin-bottom:12px"><h2>${esc(b.title)}</h2><span class="muted small">${total.toLocaleString()} in total</span></div>
+      ${total ? `<div class="seg-bar">${b.items.filter((i) => i.value > 0).map((i) => `<span style="flex:${i.value};background:${colour(i)}" title="${esc(i.label)}: ${i.value.toLocaleString()}"></span>`).join('')}</div>` : '<div class="seg-bar empty"></div>'}
+      <div class="seg-legend">${b.items.map((i) => `<span><i style="background:${colour(i)}"></i>${esc(i.label)} <b>${i.value.toLocaleString()}</b>${total ? `<small>${sig((i.value / total) * 100)}%</small>` : ''}</span>`).join('')}</div></div>`;
+  };
+  const appTable = (b, own = true) => (own ? `<div class="card dtable page-table">${appTable(b, false)}</div>` : appTableInner(b));
+  const appTableInner = (b) => {
     const row = (r) => `<tr ${r._href ? `class="clickable" data-href="${esc(r._href)}"`
       : r._detail ? `class="clickable" data-action="row-detail" data-detail="${esc(r._detail)}" data-url="${esc(safeUrl(r._url))}" data-cols="${b.columns.length}"` : ''}>${
-      b.columns.map((c, i) => appCell(c, r, i === 0)).join('')}</tr>`;
+      b.columns.map((c, i) => appCell(c, r, i === 0, b.unit)).join('')}</tr>`;
     return `<div class="section-head app-section"><h2>${esc(b.title)}</h2>${b.note_time ? `<span class="muted small">${esc(b.note_label)} ${fmtTime(b.note_time)}</span>` : ''}</div>
       ${b.note ? `<p class="muted small app-note">${esc(b.note)}</p>` : ''}
-      ${b.rows.length ? `<div class="card"><div class="table-scroll"><table><tr>${b.columns.map((c) => `<th data-sort="${c.kind === 'num' || c.kind === 'time' ? 'num' : 'text'}">${esc(c.label)}</th>`).join('')}</tr>
+      ${b.rows.length ? `<div class="card"><div class="table-scroll"><table><tr>${b.columns.map((c) => `<th data-sort="${c.kind === 'num' || c.kind === 'time' || c.kind === 'unit' ? 'num' : 'text'}">${esc(c.label)}</th>`).join('')}</tr>
         ${b.rows.map(row).join('')}</table></div></div>${b.rows.some((r) => r._detail) ? '<p class="muted small" style="margin:8px 2px 0">Click a row for the details.</p>' : ''}`
     : `<div class="card card-pad muted">${esc(b.empty)}</div>`}`;
   };
@@ -1056,18 +1197,28 @@
       return page(esc(d.app_name), '', '', empty(`${esc(d.app_name)} is not connected`, isAdmin() ? 'Add its address and sign-in details under Integrations.' : 'Ask an admin to connect it under Integrations.',
         isAdmin() ? '<div style="margin-top:14px"><a class="btn primary" href="#/integrations">Open Integrations</a></div>' : '', 'plug'));
     }
-    const filters = d.filters.length ? `<form class="row app-filters" data-form="app-filter" data-base="${esc(base)}">${d.filters.map((f) => (f.kind === 'select'
+    const filters = d.filters.length ? `<form class="row app-filters" data-form="app-filter" data-base="${esc(base)}">${d.filters.map((f) => `<label class="fl"><span>${esc(f.label)}</span>${(f.kind === 'select'
       ? `<select name="${esc(f.name)}" style="width:auto" aria-label="${esc(f.label)}" data-change="submit-form">${f.options.map(([v, t]) => `<option value="${esc(v)}" ${v === f.value ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>`
-      : `<input type="text" name="${esc(f.name)}" value="${esc(f.value)}" placeholder="${esc(f.label)}" aria-label="${esc(f.label)}" style="width:${Number(f.width) || 220}px">`)).join('')}
+      : `<input type="text" name="${esc(f.name)}" value="${esc(f.value)}" placeholder="${esc(f.label)}" aria-label="${esc(f.label)}" style="width:${Number(f.width) || 220}px">`)}</label>`).join('')}
       <button class="btn">Apply</button>${params.toString() ? `<a class="btn ghost" href="${esc(base)}">Clear</a>` : ''}</form>` : '';
     const tiles = d.tiles.length ? `<div class="stats app-stats" style="--n:${Math.min(4, d.tiles.length)}">${d.tiles.map(appTile).join('')}</div>` : '';
     let body = '';
     let run = [];
-    const flush = () => { if (run.length) { body += `<div class="app-grid">${run.join('')}</div>`; run = []; } };
-    d.blocks.forEach((b) => { if (b.type === 'bars') { run.push(appBars(b)); return; } flush(); body += b.type === 'trend' ? appTrend(b) : appTable(b); });
+    lineBlocks.clear();
+    let charts = false;
+    const flush = () => { if (run.length) { body += `<div class="app-grid ${charts ? 'two' : ''}">${run.join('')}</div>`; run = []; charts = false; } };
+    (d.layout === 'grid' ? [] : d.blocks).forEach((b, i) => {
+      if (b.type === 'bars') { run.push(appBars(b)); return; }
+      if (b.type === 'lines') { charts = charts || !b.wide; run.push(appLines(b, `lc${i}`)); return; }
+      if (b.type === 'segments') { run.push(appSegments(b)); return; }
+      flush();
+      body += b.type === 'trend' ? appTrend(b) : b.type === 'tiles' ? `<div class="stats app-stats" style="--n:${Math.min(6, b.items.length)}">${b.items.map(appTile).join('')}</div>` : appTable(b);
+    });
     flush();
+    if (d.layout === 'grid') body = dashGrid(d.blocks);
     const open = d.external && safeUrl(d.external.url) ? outLink(d.external.url, `${icon('external', 16)} ${esc(d.external.label)}`, 'btn') : '';
-    return { html: page(esc(d.title), esc(d.subtitle || ''), open, filters + tiles + body), mount: () => { $('#top-title').textContent = `${d.app_name} · ${d.label}`; } };
+    const draw = (html) => (d.layout === 'grid' ? html.replace('<div class="page">', '<div class="page wide">') : html);
+    return { html: draw(page(`${d.icon ? tintIcon(d.icon, d.tint, 22, 'big') : ''}${esc(d.title)}`, esc(d.subtitle || ''), open, filters + tiles + body)), mount: () => { $('#top-title').textContent = `${d.app_name} · ${d.label}`; drawAllLines(); } };
   };
 
   // ---------- AI briefings ----------
@@ -2254,6 +2405,11 @@ Authorization: Bearer &lt;token&gt;
       if (!soft && view.firstElementChild) view.firstElementChild.classList.add('enter');
       if (soft) view.scrollTop = top;
       if (result.mount) result.mount();
+      const heading = $('.page-head h1', view);
+      const group = NAV.findIndex(([, items]) => items.some((item) => item[0] === key));
+      if (heading && !$('.nav-ico', heading) && (group >= 0 || key === 'account')) {
+        heading.insertAdjacentHTML('afterbegin', tintIcon(key === 'account' ? 'user' : NAV[group][1].find((item) => item[0] === key)[2], [3, 1, 5, 2][Math.max(0, group)] || 1, 22, 'big'));
+      }
       const insight = $('#ai-insight', view);
       if (insight && state.insight && state.insight.key === current) { insight.innerHTML = state.insight.html; insight.dataset.text = state.insight.text; }
       const sorted = state.sorts[current];

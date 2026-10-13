@@ -94,8 +94,11 @@ under Integrations:
   monitoring, threat hunting, vulnerability detection, MITRE ATT&CK, PCI DSS / GDPR / HIPAA /
   NIST 800-53 / TSC, Docker / AWS / GitHub, agents and server status. Configuration assessment,
   agents and server status need CERBERUS to be connected to the Wazuh *dashboard* address.
-- **Grafana**: home, dashboards (open in Grafana), alert rules, notification configuration,
-  silences, active notifications and data sources, plus the existing Logs and Infrastructure pages.
+- **Grafana**: home, alert rules, notification configuration, silences, active notifications and
+  data sources, plus the existing Logs and Infrastructure pages. Every Grafana dashboard also gets
+  its own entry under **Dashboards** and is drawn inside CERBERUS with live data: its variables
+  become filters, its rows become sections, and stat, gauge, bar gauge, time series, table and
+  logs panels are supported for Prometheus and Loki. New dashboards appear within five minutes.
 
 Everything is described in `backend/app/apps.py`. To add an application, write its page
 functions (each returns tiles, bars and tables as plain data) and add one entry to `APPS`;
