@@ -942,19 +942,6 @@ tr.open td { background: var(--hover); }
 .page.wide { max-width: 1800px; }
 .d2 .dtile { padding: 6px 10px; }
 .d2 .dtile b { font-size: 18px; }
-@media (max-width: 1700px) {
-  .d2 .dtile b { font-size: 20px; }
-  .dash-grid { grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-rows: auto; gap: 12px; }
-  .dcell { grid-row: auto !important; grid-column: span 12 !important; }
-  .dcell.d2 { grid-column: span 2 !important; } .dcell.d3 { grid-column: span 3 !important; } .dcell.d4 { grid-column: span 4 !important; } .dcell.d6 { grid-column: span 6 !important; }
-  .dcell .lchart { min-height: 200px; }
-  .dgauge svg { height: 92px; flex: none; }
-  .dtile { padding: 10px 14px; min-height: 64px; }
-}
-@media (max-width: 1000px) {
-  .dcell.d2 { grid-column: span 4 !important; } .dcell.d3, .dcell.d4 { grid-column: span 6 !important; } .dcell.d6 { grid-column: span 12 !important; }
-}
-@media (max-width: 640px) { .dcell.d2 { grid-column: span 6 !important; } .dcell.d3, .dcell.d4 { grid-column: span 12 !important; } .fl { flex: 1 1 140px; } .fl select, .fl input { width: 100% !important; max-width: none; } }
 @media (min-width: 901px) { .shell.rail .nav-ico { margin: 0; } }
 
 /* ---------- application pages: icon tiles, split bars, tables with their title inside ---------- */
@@ -986,3 +973,176 @@ tr.open td { background: var(--hover); }
 .page-table td, .page-table th { padding: 10px 16px; }
 .app-grid { margin-bottom: 0; }
 .app-stats { margin-bottom: 18px; }
+
+/* ---------- nothing may push the page sideways: charts stay inside their card until they are redrawn ---------- */
+.content { overflow-x: hidden; }
+.lchart { overflow: hidden; }
+.lchart svg { width: 100%; height: 100%; }
+.lchart .lc-tip { max-width: min(320px, 100%); }
+.chart { overflow: hidden; }
+.chart svg { max-width: 100%; }
+.page, .page-head > div, .app-grid > *, .stats > * { min-width: 0; }
+.page-head h1 { min-width: 0; overflow-wrap: anywhere; }
+.page-head h1 .nav-ico { flex: none; }
+
+/* ================= polish layer: full-width pages, content-width responsiveness, quiet professional styling, glass, loading ================= */
+
+/* ---- tokens ---- */
+:root {
+  --radius: 10px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, .05);
+  --glass: rgba(255, 255, 255, .72);
+  --glass-strong: rgba(255, 255, 255, .86);
+  --glass-line: rgba(16, 24, 40, .10);
+  --glass-blur: saturate(170%) blur(18px);
+  --card-bg: rgba(255, 255, 255, .88);
+  --glow-1: color-mix(in srgb, var(--accent) 9%, transparent);
+  --glow-2: color-mix(in srgb, var(--accent-2) 7%, transparent);
+  --bg: #f7f8fa;
+  --panel: #f1f3f5;
+}
+:root[data-theme=dark] {
+  --shadow: 0 1px 2px rgba(0, 0, 0, .35);
+  --glass: rgba(24, 25, 27, .66);
+  --glass-strong: rgba(26, 27, 29, .84);
+  --glass-line: rgba(255, 255, 255, .09);
+  --card-bg: rgba(31, 32, 34, .72);
+  --glow-1: color-mix(in srgb, var(--accent-deep) 11%, transparent);
+  --glow-2: color-mix(in srgb, var(--accent-2) 8%, transparent);
+  --bg: #121314;
+  --panel: #0d0e0f;
+  --line: rgba(255, 255, 255, .085);
+  --line-strong: rgba(255, 255, 255, .16);
+}
+
+/* ---- glass: the page sits on a soft glow; everything that floats above it is frosted ---- */
+body { background: radial-gradient(1100px 520px at 88% -8%, var(--glow-1), transparent 70%), radial-gradient(900px 480px at 12% -12%, var(--glow-2), transparent 70%), var(--bg); background-attachment: fixed; }
+.sidebar { background: var(--glass); border-right-color: var(--glass-line); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+.main { position: relative; }
+.topbar { position: absolute; inset: 0 0 auto 0; z-index: 20; background: var(--glass); border-bottom-color: var(--glass-line); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+.content { padding-top: 56px; scroll-padding-top: 68px; }
+.stale:not([hidden]) { margin-top: 56px; }
+.stale:not([hidden]) + .content { padding-top: 0; }
+.facets { top: 68px; }
+.card { background: var(--card-bg); border-color: var(--glass-line); }
+.pop, .lc-tip, dialog.palette, dialog.modal, .drawer-panel, #rail-tip, .toast {
+  background: var(--glass-strong); border: 1px solid var(--glass-line); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+#rail-tip, .toast { color: var(--text); }
+dialog.palette::backdrop, dialog.modal::backdrop { background: rgba(8, 10, 12, .38); -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px); }
+.pop-head, .dtable th { background: var(--glass-strong); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+.btn.app-btn, .app-filters, .nav-app { background: var(--card-bg); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .sidebar, .topbar { background: var(--panel); }
+  .pop, .lc-tip, dialog.palette, dialog.modal, .drawer-panel, .pop-head, .dtable th { background: var(--surface); }
+}
+
+/* ---- pages use the whole width, and respond to the width they actually have ---- */
+.content { container: view / inline-size; }
+.page, .page.wide { max-width: none; padding: 26px 28px 56px; }
+.page-head { margin-bottom: 16px; align-items: center; }
+.page-head h1 { font-size: 22px; letter-spacing: -.015em; gap: 12px; }
+.page-head p { font-size: 14px; margin-top: 3px; }
+.page-head h1 + p { padding-left: 48px; }
+.nav-ico.big { width: 36px; height: 36px; border-radius: 9px; }
+.field input, .field select, .field textarea { max-width: 720px; }
+@container view (max-width: 980px) {
+  .stats, .app-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tiles, .grid-2, .split, .suggest, .strip, .dash, .watch-grid, .app-grid.two { grid-template-columns: minmax(0, 1fr); }
+  .breakdowns { grid-template-columns: 1fr 1fr; }
+  .page, .page.wide { padding: 20px 18px 48px; }
+  .page-head h1 + p { padding-left: 0; }
+}
+@container view (max-width: 460px) { .stats, .app-stats { grid-template-columns: minmax(0, 1fr); } }
+
+/* the dashboard grid: Grafana's exact 24 columns only when there is room for them */
+.dash-grid { grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-rows: auto; gap: 12px; }
+.dcell { grid-column: span 12; }
+.dcell.d2 { grid-column: span 2; } .dcell.d3 { grid-column: span 3; } .dcell.d4 { grid-column: span 4; } .dcell.d6 { grid-column: span 6; }
+.dcell .lchart { min-height: 200px; }
+.dgauge svg { height: 92px; flex: none; }
+.dtile { padding: 10px 14px; min-height: 64px; }
+.d2 .dtile b { font-size: 20px; }
+@container view (min-width: 1420px) {
+  .dash-grid { grid-template-columns: repeat(24, minmax(0, 1fr)); grid-auto-rows: minmax(28px, auto); gap: 10px; }
+  .dash-grid .dcell { grid-column: var(--gx) / span var(--gw); grid-row: var(--gy) / span var(--gh); }
+  .dcell .lchart { min-height: 150px; }
+  .dgauge svg { height: auto; flex: 1; }
+  .dtile { min-height: 0; }
+  .d2 .dtile { padding: 6px 10px; } .d2 .dtile b { font-size: 18px; }
+}
+@container view (max-width: 860px) {
+  .dcell.d2 { grid-column: span 4; } .dcell.d3, .dcell.d4 { grid-column: span 6; } .dcell.d6 { grid-column: span 12; }
+}
+@container view (max-width: 520px) { .dcell.d2 { grid-column: span 6; } .dcell.d3, .dcell.d4 { grid-column: span 12; } }
+
+/* ---- headline numbers: one calm, fixed shape ---- */
+.app-stats { gap: 14px; margin: 14px 0 16px; }
+.stat.kpi { display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 14px 16px 15px; min-height: 104px; min-width: 0; }
+.stat.kpi:hover { transform: none; border-color: var(--line-strong); }
+.kpi-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
+.kpi-top span { font-size: 13px; font-weight: 500; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat.kpi .ico { width: 26px; height: 26px; border-radius: 7px; background: var(--hover); color: var(--muted); flex: none; }
+.stat.kpi b { font-size: 26px; font-weight: 600; line-height: 1.2; letter-spacing: -.02em; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat.kpi b.stat-text { font-size: 24px; }
+.stat.kpi small { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat.kpi .tmeter { margin-top: auto; height: 4px; }
+.stat.kpi.t-ok b { color: var(--text); }
+.stat.kpi.t-ok .ico { background: var(--ok-soft); color: var(--ok); }
+
+/* ---- filters as one quiet toolbar ---- */
+.app-filters { margin: 0 0 4px; padding: 10px 12px; border: 1px solid var(--glass-line); border-radius: var(--radius); gap: 10px; align-items: flex-end; }
+.fl > span { font-size: 11px; letter-spacing: .04em; }
+.app-filters select, .app-filters input[type=text] { padding: 6px 10px; font-size: 14px; border-radius: 8px; height: 34px; }
+.app-filters .btn { height: 34px; padding: 0 14px; box-shadow: none; }
+
+/* ---- cards, charts, bars, tables: smaller titles, thinner marks, more air ---- */
+.card-pad { padding: 16px 18px 18px; }
+.card-pad > h2, .app-grid h2, .lc-card h2, .segs h2, .page-table .section-head h2, .section-head h2 { font-size: 14.5px; font-weight: 600; letter-spacing: 0; }
+.app-grid { gap: 14px; margin-top: 14px; }
+.lc-line { stroke-width: 1.75; }
+.lc-area { opacity: 1; }
+.lc-grid { stroke: var(--line); stroke-dasharray: 3 4; }
+.lc-axis { font-size: 11px; }
+.hbars.wide .hbar { padding: 6px 6px; font-size: 13.5px; }
+.hbar-track { height: 6px; border-radius: 3px; background: var(--hover); overflow: hidden; }
+.hbar-fill { height: 6px; border-radius: 3px; }
+.hbar-val { font-weight: 600; color: var(--text); }
+.seg-bar { height: 10px; border-radius: 5px; }
+.seg-legend { font-size: 13px; gap: 6px 20px; }
+.page-table { margin-top: 14px; }
+th { font-size: 11.5px; letter-spacing: .04em; background: transparent; }
+td { padding-top: 10px; padding-bottom: 10px; }
+tr.clickable:hover td { background: color-mix(in srgb, var(--hover) 70%, transparent); }
+.badge { font-weight: 500; }
+.detail-row td { background: color-mix(in srgb, var(--hover) 45%, transparent); }
+
+/* ---- loading: a branded start screen, a page outline while data arrives, a thin progress line ---- */
+.boot { min-height: 100vh; display: grid; place-items: center; padding: 24px; color: var(--text); }
+.boot-card { display: flex; flex-direction: column; align-items: center; gap: 14px; width: min(320px, 86vw); text-align: center; animation: bootin .35s ease-out; }
+.boot-mark { width: 74px; color: var(--accent-deep); animation: bootpulse 1.8s ease-in-out infinite; }
+.boot-name { font: 600 30px/1 "Barlow Condensed", "Segoe UI", sans-serif; letter-spacing: .14em; margin-right: -.14em; }
+.boot-bar { width: 180px; height: 3px; border-radius: 2px; background: var(--hover); overflow: hidden; }
+.boot-bar i { display: block; width: 40%; height: 100%; border-radius: 2px; background: linear-gradient(90deg, transparent, var(--accent), transparent); animation: bootbar 1.15s ease-in-out infinite; }
+.boot-text { margin: 0; color: var(--muted); font-size: 13.5px; }
+@keyframes bootin { from { opacity: 0; transform: translateY(6px); } }
+@keyframes bootpulse { 50% { opacity: .55; transform: scale(.97); } }
+@keyframes bootbar { from { transform: translateX(-110%); } to { transform: translateX(260%); } }
+.topbar::after { content: ""; position: absolute; left: 0; bottom: -1px; height: 2px; width: 30%; background: linear-gradient(90deg, transparent, var(--accent), transparent); opacity: 0; pointer-events: none; }
+.shell.loading .topbar::after { opacity: 1; animation: routebar 1s ease-in-out infinite; }
+@keyframes routebar { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+.skeleton .sk { margin: 0; border-radius: var(--radius); background: linear-gradient(90deg, var(--hover) 20%, color-mix(in srgb, var(--hover) 55%, transparent) 38%, var(--hover) 60%); background-size: 300% 100%; animation: shimmer 1.5s ease infinite; }
+.sk-head { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+.skeleton .sk-icon { width: 36px; height: 36px; border-radius: 9px; }
+.skeleton .sk-title { width: 240px; height: 20px; border-radius: 6px; margin-bottom: 8px; }
+.skeleton .sk-sub { width: 380px; max-width: 60vw; height: 12px; border-radius: 6px; }
+.sk-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 14px; }
+.sk-row.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.skeleton .sk-kpi { height: 104px; } .skeleton .sk-chart { height: 250px; margin-bottom: 14px; } .skeleton .sk-panel { height: 200px; }
+@container view (max-width: 980px) { .sk-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sk-row.two { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .boot-mark, .boot-bar i, .skeleton .sk, .shell.loading .topbar::after { animation: none; } }
+
+/* menus and tooltips sit inside other frosted bars, where a second blur cannot see the page: keep them nearly solid so nothing reads through */
+:root { --glass-strong: rgba(255, 255, 255, .96); }
+:root[data-theme=dark] { --glass-strong: rgba(27, 28, 30, .96); }
+/* the start screen appears before the saved theme is known: follow the system setting until then */
+@media (prefers-color-scheme: dark) { :root:not([data-theme]) { --bg: #121314; --text: #ededed; --muted: #a3a3a3; --hover: #2a2a2a; --accent-deep: #2dd4bf; --glow-1: rgba(45, 212, 191, .08); --glow-2: rgba(14, 165, 233, .06); color-scheme: dark; } }

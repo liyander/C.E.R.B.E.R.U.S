@@ -1013,7 +1013,7 @@
 
   // ---------- values with units, and line charts, for application dashboards ----------
 
-  const sig = (v) => { const a = Math.abs(v); const s = a >= 100 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : a >= 1 ? v.toFixed(2) : a === 0 ? '0' : String(Number(v.toPrecision(2))); return s.includes('.') && !s.includes('e') ? s.replace(/\.?0+$/, '') : s; };
+  const sig = (v) => { const a = Math.abs(v); const s = a >= 100 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : a >= 1 ? v.toFixed(2) : a < 1e-4 ? '0' : String(Number(v.toPrecision(2))); return s.includes('.') && !s.includes('e') ? s.replace(/\.?0+$/, '') : s; };
   const scaled = (v, base, units) => { let i = 0; let n = Math.abs(v); while (n >= base && i < units.length - 1) { n /= base; i += 1; } return `${v < 0 ? '-' : ''}${sig(n)}${units[i]}`; };
   function fmtUnit(v, unit) {
     if (v === null || v === undefined || Number.isNaN(v)) return '—';
@@ -1074,7 +1074,8 @@
       return `<line class="lc-grid" x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}"/><text class="lc-axis" x="${L - 8}" y="${yy}" dy="4" text-anchor="end">${esc(fmtUnit(v, b.unit))}</text>`; }).join('');
     const ticks = [0, Math.round((n - 1) / 2), n - 1].map((i, k) => `<text class="lc-axis" x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="${k === 0 ? 'start' : k === 2 ? 'end' : 'middle'}">${esc(when(b.start + i * b.step))}</text>`).join('');
     el.innerHTML = `<svg width="${W}" height="${H}" role="img" aria-label="${esc(b.title)}">${grid}${ticks}
-      ${b.fill && b.series[0] ? `<path class="lc-area" d="${path(b.series[0])}L${x(b.series[0].v.length - 1).toFixed(1)} ${y(lo).toFixed(1)}L${x(0).toFixed(1)} ${y(lo).toFixed(1)}Z" style="fill:${catColor(0)}"/>` : ''}
+      ${b.fill && b.series[0] ? `<defs><linearGradient id="fade-${el.dataset.chart}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:${catColor(0)};stop-opacity:.3"/><stop offset="1" style="stop-color:${catColor(0)};stop-opacity:0"/></linearGradient></defs>
+        <path class="lc-area" d="${path(b.series[0])}L${x(b.series[0].v.length - 1).toFixed(1)} ${y(lo).toFixed(1)}L${x(0).toFixed(1)} ${y(lo).toFixed(1)}Z" fill="url(#fade-${el.dataset.chart})"/>` : ''}
       ${b.series.map((s, i) => `<path class="lc-line" d="${path(s)}" style="stroke:${catColor(i)}"/>`).join('')}
       <line class="lc-guide" y1="${T}" y2="${H - B}" x1="0" x2="0" visibility="hidden"/></svg><div class="lc-tip" hidden></div>`;
     const guide = $('.lc-guide', el); const tip = $('.lc-tip', el);
@@ -1127,7 +1128,7 @@
     const w = b.w || 24;
     const html = b.type === 'tiles' ? dashTiles(b) : b.type === 'gauge' ? dashGauge(b) : b.type === 'bars' ? dashBars(b)
       : b.type === 'lines' ? appLines(b, `lc${i}`) : `<div class="card dtable">${appTable(b, false)}</div>`;
-    return `<div class="dcell ${w <= 4 ? 'd2' : w <= 6 ? 'd3' : w <= 8 ? 'd4' : w <= 12 ? 'd6' : 'd12'} dk-${esc(b.type)}" style="grid-column:${(b.x || 0) + 1} / span ${w};grid-row:${(b.y || 0) + 1} / span ${b.h || 8}">${html}</div>`;
+    return `<div class="dcell ${w <= 4 ? 'd2' : w <= 6 ? 'd3' : w <= 8 ? 'd4' : w <= 12 ? 'd6' : 'd12'} dk-${esc(b.type)}" style="--gx:${(b.x || 0) + 1};--gw:${w};--gy:${(b.y || 0) + 1};--gh:${b.h || 8}">${html}</div>`;
   }).join('')}</div>`;
 
   // ---------- application workspaces: one screen draws every page the server describes ----------
@@ -1138,8 +1139,10 @@
     const numeric = typeof t.value === 'number';
     const shown = !numeric ? esc(t.value) : t.unit !== undefined ? esc(fmtUnit(t.value, t.unit)) : t.value.toLocaleString();
     const meter = typeof t.meter === 'number' ? `<i class="tmeter"><u style="width:${Math.max(0, Math.min(100, t.meter * 100)).toFixed(1)}%"></u></i>` : '';
-    const inner = `${t.icon && ICONS[t.icon] ? `<div class="ico">${icon(t.icon, 20)}</div>` : ''}<div class="grow"><b class="raw ${numeric ? '' : 'stat-text'}">${shown}</b><span>${esc(t.label)}${t.hint ? ` <small title="${esc(t.hint)}">· ${esc(t.hint)}</small>` : ''}</span>${meter}</div>`;
-    return t.href ? `<a class="card stat t-${esc(t.tone)}" href="${esc(t.href)}">${inner}</a>` : `<div class="card stat still t-${esc(t.tone)}">${inner}</div>`;
+    // One fixed shape for every headline number: label and icon on top, the number, then an optional note or bar.
+    const inner = `<div class="kpi-top"><span>${esc(t.label)}</span>${t.icon && ICONS[t.icon] ? `<div class="ico">${icon(t.icon, 16)}</div>` : ''}</div>
+      <b class="raw ${numeric ? '' : 'stat-text'}">${shown}</b>${t.hint ? `<small title="${esc(t.hint)}">${esc(t.hint)}</small>` : ''}${meter}`;
+    return t.href ? `<a class="card stat kpi t-${esc(t.tone)}" href="${esc(t.href)}">${inner}</a>` : `<div class="card stat kpi still t-${esc(t.tone)}">${inner}</div>`;
   };
   const appBars = (b) => {
     const max = Math.max(0, ...b.items.map((i) => i.value)) || 1;
@@ -2370,6 +2373,23 @@ Authorization: Bearer &lt;token&gt;
 
   // ---------- routing / boot ----------
 
+  // Charts are drawn to the width they have at that moment. The content area also changes width without the
+  // window resizing (the sidebar opening or collapsing), so every chart is redrawn whenever it does.
+  let watchedView = null;
+  function watchViewWidth() {
+    const view = $('#view');
+    if (!view || view === watchedView || typeof ResizeObserver === 'undefined') return;
+    watchedView = view;
+    let width = view.clientWidth;
+    let timer;
+    new ResizeObserver(() => {
+      if (view.clientWidth === width) return;
+      width = view.clientWidth;
+      clearTimeout(timer);
+      timer = setTimeout(() => { charts.forEach((draw) => draw()); drawAllLines(); }, 120);
+    }).observe(view);
+  }
+
   let renderSeq = 0;
   let current = '';
   async function route({ soft = false } = {}) {
@@ -2379,6 +2399,7 @@ Authorization: Bearer &lt;token&gt;
     const key = views[name] && (!ADMIN_VIEWS.has(name) || isAdmin()) ? name : 'overview';
     if (!state.appsLoaded) await loadApps();
     ensureShell();
+    watchViewWidth();
     // Opening an application page directly switches the sidebar to that application.
     if (key === 'app' && pref.get('app', 'all') !== id && state.apps.some((a) => a.id === id)) { pref.set('app', id); renderNav(); }
     state.navKey = key === 'app' ? `app/${id}/${sub || 'overview'}` : key;
@@ -2391,24 +2412,26 @@ Authorization: Bearer &lt;token&gt;
     if (!soft) { closeDrawer(); state.insight = null; }
     current = key === 'app' ? state.navKey : key + (id ? '/detail' : '');
     if (!soft) {
-      view.innerHTML = '<div class="page skeleton"><div class="sk w30"></div><div class="sk w50 thin"></div><div class="sk block"></div><div class="sk block short"></div></div>';
+      view.innerHTML = '<div class="page skeleton" aria-busy="true" aria-label="Loading"><div class="sk-head"><div class="sk sk-icon"></div><div><div class="sk sk-title"></div><div class="sk sk-sub"></div></div></div><div class="sk-row"><div class="sk sk-kpi"></div><div class="sk sk-kpi"></div><div class="sk sk-kpi"></div><div class="sk sk-kpi"></div></div><div class="sk sk-chart"></div><div class="sk-row two"><div class="sk sk-panel"></div><div class="sk sk-panel"></div></div></div>';
       view.scrollTop = 0;
+      $('.shell').classList.add('loading');
     }
     const overview = loadOverview();
     overview.catch(() => {});
     try {
       const result = await views[key]({ id, sub, params: new URLSearchParams(query), overview });
       if (seq !== renderSeq || !state.user) return;
+      $('.shell').classList.remove('loading');
       const top = view.scrollTop;
       charts.clear();
       view.innerHTML = typeof result === 'string' ? result : result.html;
       if (!soft && view.firstElementChild) view.firstElementChild.classList.add('enter');
       if (soft) view.scrollTop = top;
       if (result.mount) result.mount();
-      const heading = $('.page-head h1', view);
+      const pageTitle = $('.page-head h1', view);
       const group = NAV.findIndex(([, items]) => items.some((item) => item[0] === key));
-      if (heading && !$('.nav-ico', heading) && (group >= 0 || key === 'account')) {
-        heading.insertAdjacentHTML('afterbegin', tintIcon(key === 'account' ? 'user' : NAV[group][1].find((item) => item[0] === key)[2], [3, 1, 5, 2][Math.max(0, group)] || 1, 22, 'big'));
+      if (pageTitle && !$('.nav-ico', pageTitle) && (group >= 0 || key === 'account')) {
+        pageTitle.insertAdjacentHTML('afterbegin', tintIcon(key === 'account' ? 'user' : NAV[group][1].find((item) => item[0] === key)[2], [3, 1, 5, 2][Math.max(0, group)] || 1, 22, 'big'));
       }
       const insight = $('#ai-insight', view);
       if (insight && state.insight && state.insight.key === current) { insight.innerHTML = state.insight.html; insight.dataset.text = state.insight.text; }
@@ -2417,10 +2440,12 @@ Authorization: Bearer &lt;token&gt;
       if (heading && heading.dataset.sort) sortTable(heading, sorted.dir);
       if (!soft && !matchMedia('(prefers-reduced-motion: reduce)').matches) countUp(view);
     } catch (err) {
+      if (seq === renderSeq && $('.shell')) $('.shell').classList.remove('loading');
       if (seq === renderSeq && state.user && !soft) view.innerHTML = `<div class="page">${empty('Something went wrong', esc(err.message), '<div style="margin-top:14px"><button class="btn" data-action="reload">Try again</button></div>', 'alert')}</div>`;
     }
   }
   actions.reload = () => route();
+  actions['reload-page'] = () => location.reload();
 
   // Headline numbers count up when a page opens.
   function countUp(scope) {
@@ -2528,7 +2553,8 @@ Authorization: Bearer &lt;token&gt;
       loadChat();
       route();
     } catch (err) {
-      app.innerHTML = `<div class="boot">Cannot reach the CERBERUS API: ${esc(err.message)}</div>`;
+      app.innerHTML = `<div class="boot"><div class="boot-card"><svg class="boot-mark" viewBox="0 0 143 100" aria-hidden="true"><path d="M0 77H27.3L44.5 32 56.7 62 67 0H76L86.3 62 98.5 32 115.7 77H143V86H108.8L98.5 59 82.8 99.5 71.500 29 60.2 99.5 44.5 59 34.2 86H0Z" fill="currentColor"/></svg><b class="boot-name">CERBERUS</b>
+        <p class="boot-text">Cannot reach the CERBERUS server.<br><span class="muted">${esc(err.message)}</span></p><button class="btn" data-action="reload-page">Try again</button></div></div>`;
     }
   }
 
