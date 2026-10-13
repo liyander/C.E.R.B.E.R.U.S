@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import accounts, ai, auth, demo, grafana, mailer, store, tools
+from . import accounts, ai, apps, auth, demo, grafana, mailer, store, tools, watch, wazuh
 from .db import ROOT, audit, db, get_integration, get_setting, init_db, now, set_integration, set_setting
 
 WEB_DIR = ROOT / "web"
@@ -24,6 +24,7 @@ async def lifespan(app: FastAPI):
     with db() as conn:
         if not get_setting(conn, "ingest_token"):
             set_setting(conn, "ingest_token", secrets.token_urlsafe(32))
+    watch.start()
     yield
 
 
@@ -65,6 +66,62 @@ class ModelsPreviewBody(BaseModel):
 class ChatBody(BaseModel):
     message: str = Field(min_length=1, max_length=8000)
     conversation_id: int | None = None
+    tz_offset: int = Field(default=0, ge=-720, le=840)  # the browser's offset from UTC, in minutes
+
+
+class BriefBody(BaseModel):
+    kind: str = Field(pattern=r"^(logs|log_line|infrastructure|overview)$")
+    query: str = Field(default="", max_length=1000)
+    minutes: int = Field(default=15, ge=5, le=1440)
+    start: str = Field(default="", max_length=40)
+    end: str = Field(default="", max_length=40)
+    line: str = Field(default="", max_length=4000)
+    labels: dict[str, str] = Field(default_factory=dict)
+    tz_offset: int = Field(default=0, ge=-720, le=840)
+
+
+class WatchBody(BaseModel):
+    enabled: bool | None = None
+    interval_minutes: int | None = Field(default=None, ge=1, le=120)
+    tz_offset: int | None = Field(default=None, ge=-720, le=840)
+    checks: dict[str, bool] | None = None
+    disk_pct: int | None = Field(default=None, ge=50, le=100)
+    memory_pct: int | None = Field(default=None, ge=50, le=100)
+    cpu_pct: int | None = Field(default=None, ge=50, le=100)
+    load_factor: float | None = Field(default=None, ge=0.1, le=10)
+    log_errors_5m: int | None = Field(default=None, ge=1, le=1000000)
+    notify_in_app: bool | None = None
+    notify_email: bool | None = None
+    email_min_severity: int | None = Field(default=None, ge=1, le=10)
+    renotify_hours: int | None = Field(default=None, ge=1, le=168)
+    ai_writeup: bool | None = None
+    digest_enabled: bool | None = None
+    digest_hour: int | None = Field(default=None, ge=0, le=23)
+
+
+class WazuhBody(BaseModel):
+    enabled: bool = False
+    url: str = Field(default="", max_length=300, pattern=r"^(https?://[^\s]+)?$")
+    username: str = Field(default="", max_length=120)
+    password: str = Field(default="", max_length=300)
+    verify_tls: bool = True
+    min_level: int = Field(default=7, ge=0, le=15)
+    exclude_rules: str = Field(default="", max_length=500, pattern=r"^[0-9,; ]*$")
+    poll_minutes: int = Field(default=2, ge=1, le=60)
+
+
+class FindingBody(BaseModel):
+    key: str = Field(min_length=1, max_length=300)
+    dismissed: bool = True
+
+
+class WatchRunBody(BaseModel):
+    tz_offset: int = Field(default=0, ge=-720, le=840)
+
+
+class ContextBody(BaseModel):
+    labels: dict[str, str]
+    ns: str = Field(pattern=r"^\d{10,20}$")
 
 
 class RenameBody(BaseModel):
@@ -100,21 +157,6 @@ def health():
 
 # ---------- read models ----------
 
-def _hourly_events(conn) -> list[dict]:
-    """Event counts for each of the last 24 hours (UTC buckets), split by severity band."""
-    current = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
-    hours = [current - timedelta(hours=offset) for offset in range(23, -1, -1)]
-    buckets = {h.strftime("%Y-%m-%dT%H"): {"hour": h.strftime("%Y-%m-%dT%H:00:00Z"), "critical": 0, "high": 0,
-                                           "medium": 0, "low": 0} for h in hours}
-    rows = conn.execute(
-        "SELECT substr(ts, 1, 13) AS hour, severity, COUNT(*) AS n FROM events WHERE ts >= ? GROUP BY hour, severity",
-        (hours[0].strftime("%Y-%m-%dT%H:00:00Z"),))
-    for row in rows:
-        if row["hour"] in buckets:
-            buckets[row["hour"]][store.severity_label(row["severity"])] += row["n"]
-    return list(buckets.values())
-
-
 @app.get("/api/v1/overview")
 def overview(user=User):
     with db() as conn:
@@ -132,7 +174,9 @@ def overview(user=User):
             "medium": one(f"SELECT COUNT(*) FROM incidents WHERE {active} AND severity BETWEEN 4 AND 6"),
             "low": one(f"SELECT COUNT(*) FROM incidents WHERE {active} AND severity < 4"),
             "events_24h": one("SELECT COUNT(*) FROM events WHERE ts >= ?", store.ago(hours=24)),
-            "hourly": _hourly_events(conn),
+            "hourly": store.event_stats(conn, hours=24)["hourly"],
+            "loki_configured": bool(grafana_cfg.get("url") and grafana_cfg.get("loki_uid")),
+            "metrics_configured": bool(grafana_cfg.get("url") and grafana_cfg.get("prometheus_uid")),
             "top_assets": [dict(r) for r in conn.execute(
                 "SELECT a.name, COUNT(*) AS events FROM events e JOIN assets a ON a.id = e.asset_id "
                 "WHERE e.ts >= ? GROUP BY a.id ORDER BY events DESC, a.name LIMIT 5", (store.ago(hours=24),))],
@@ -144,6 +188,8 @@ def overview(user=User):
             "ai_provider": {"name": provider["name"], "model": provider["model"]} if provider else None,
             "grafana_configured": bool(grafana_cfg.get("url")),
             "has_demo_data": bool(one("SELECT COUNT(*) FROM events WHERE demo = 1")),
+            "watch": {"enabled": watch.settings(conn)["enabled"], "last_run": get_setting(conn, "watch_last_run"),
+                      "firing": one("SELECT COUNT(*) FROM watch_findings WHERE status = 'firing'")},
             "email_configured": mailer.is_configured(mailer.config(conn)),
             "unread_notifications": accounts.unread_count(conn, user),
             "version": VERSION,
@@ -152,10 +198,208 @@ def overview(user=User):
 
 @app.get("/api/v1/events")
 def list_events(q: str = "", source: str = "", min_severity: int = 1, asset_id: int | None = None,
-                limit: int = 200, user=User):
+                start: str = "", end: str = "", limit: int = 200, user=User):
     with db() as conn:
         return store.query_events(conn, q=q, source=source, min_severity=min_severity,
-                                  asset_id=asset_id, limit=limit)
+                                  asset_id=asset_id, start=start, end=end, limit=limit)
+
+
+@app.get("/api/v1/events/stats")
+def events_stats(hours: int = 24, q: str = "", source: str = "", min_severity: int = 1, user=User):
+    with db() as conn:
+        return store.event_stats(conn, hours=hours, q=q, source=source, min_severity=min_severity)
+
+
+@app.get("/api/v1/logs")
+def logs_explore(query: str = "", minutes: int = 60, limit: int = 200, start: str = "", end: str = "", user=User):
+    """Read-only log search through Grafana's Loki datasource."""
+    with db() as conn:
+        cfg = get_integration(conn, "grafana")
+        audit(conn, user["username"], "logs.query", {"query": query[:300], "minutes": minutes, "start": start, "end": end})
+    try:
+        result = grafana.loki_explore(cfg, query, minutes, limit, start, end)
+    except grafana.GrafanaError as exc:
+        raise HTTPException(502, str(exc))
+    result["patterns"] = grafana.log_patterns(result["lines"])
+    return result
+
+
+@app.post("/api/v1/logs/context")
+def logs_context(body: ContextBody, user=User):
+    """The lines just before and after one log line, from the same stream."""
+    with db() as conn:
+        cfg = get_integration(conn, "grafana")
+    try:
+        return grafana.loki_context(cfg, body.labels, body.ns)
+    except grafana.GrafanaError as exc:
+        raise HTTPException(502, str(exc))
+
+
+# ---------- Wazuh ----------
+
+@app.get("/api/v1/integrations/wazuh")
+def wazuh_get(user=Admin):
+    with db() as conn:
+        return wazuh.status(conn)
+
+
+@app.put("/api/v1/integrations/wazuh")
+def wazuh_save(body: WazuhBody, user=Admin):
+    with db() as conn:
+        current = wazuh.settings(conn)
+        cfg = body.model_dump()
+        cfg["url"] = cfg["url"].rstrip("/")
+        # A blank password keeps the saved one, but never carries it to a different address or account.
+        if not cfg["password"] and (cfg["url"], cfg["username"]) == (current["url"], current["username"]):
+            cfg["password"] = current["password"]
+        cfg["mode"] = current["mode"] if cfg["url"] == current["url"] else ""
+        set_integration(conn, "wazuh", cfg)
+        audit(conn, user["username"], "integration.wazuh_saved", {"url": cfg["url"], "enabled": cfg["enabled"], "min_level": cfg["min_level"]})
+    return {"ok": True}
+
+
+@app.post("/api/v1/integrations/wazuh/test")
+def wazuh_test(user=Admin):
+    """Sign in to Wazuh and report what it holds; remembers whether the address is a dashboard or an indexer."""
+    with db() as conn:
+        cfg = wazuh.settings(conn)
+        try:
+            result = wazuh.test(cfg)
+        except wazuh.WazuhError as exc:
+            raise HTTPException(502, str(exc))
+        set_integration(conn, "wazuh", {**cfg, "mode": result["mode"]})
+    return result
+
+
+@app.post("/api/v1/integrations/wazuh/sync")
+def wazuh_sync(user=Admin):
+    return wazuh.sync("manual")
+
+
+# ---------- AI watch (scheduled analyst) ----------
+
+@app.get("/api/v1/watch")
+def watch_status(user=User):
+    with db() as conn:
+        return watch.status(conn)
+
+
+@app.put("/api/v1/watch")
+def watch_save(body: WatchBody, user=Admin):
+    changes = body.model_dump(exclude_none=True)
+    with db() as conn:
+        saved = watch.save_settings(conn, changes)
+        audit(conn, user["username"], "watch.settings", {k: v for k, v in changes.items() if k != "tz_offset"})
+    return {"ok": True, "settings": saved}
+
+
+@app.post("/api/v1/watch/run")
+def watch_run(body: WatchRunBody, user=Admin):
+    """Run one check now, whether or not the schedule is on."""
+    return watch.run("manual", body.tz_offset)
+
+
+@app.post("/api/v1/watch/findings")
+def watch_finding(body: FindingBody, user=User):
+    """Dismiss a finding you have seen and accept for now, or restore it. Any signed-in user may triage."""
+    with db() as conn:
+        changed = watch.set_dismissed(conn, body.key, body.dismissed, user["username"])
+    if not changed:
+        raise HTTPException(404, "That finding has already changed")
+    return {"ok": True, "changed": changed}
+
+
+@app.post("/api/v1/watch/digest")
+def watch_digest(user=Admin):
+    """Send today's digest now, to see what it looks like."""
+    with db() as conn:
+        if not watch.send_digest(conn, watch.settings(conn)):
+            raise HTTPException(409, "The digest could not be sent. Check that email is set up and an admin has a verified address.")
+    return {"ok": True}
+
+
+@app.post("/api/v1/ai/brief")
+def ai_brief(body: BriefBody, user=User):
+    """A short AI-written briefing. The server collects the data itself; the model gets no tools."""
+    tz = grafana.tz_label(body.tz_offset)
+    with db() as conn:
+        provider = _require_provider(conn)
+        cfg = get_integration(conn, "grafana")
+        audit(conn, user["username"], "ai.brief", {"kind": body.kind, "query": body.query[:300]})
+        try:
+            if body.kind == "log_line":
+                data = json.dumps({"labels": body.labels, "line": body.line})
+            elif body.kind == "logs":
+                found = grafana.loki_explore(cfg, body.query, body.minutes, 200, body.start, body.end)
+                levels = {k: sum(v[k] for v in found["volume"]) for k in grafana.LOG_LEVELS}
+                data = json.dumps({"query": found["query"], "window_minutes": found["minutes"], "total_lines": found["total"],
+                                   "lines_by_level": levels, "common_patterns_in_newest_lines": grafana.log_patterns(found["lines"], 20),
+                                   "newest_lines": [{"time": l["ts"], "host": l["labels"].get("host"),
+                                                     "program": l["labels"].get("program"), "line": l["line"][:300]}
+                                                    for l in found["lines"][:40]]})
+            elif body.kind == "infrastructure":
+                data = json.dumps(grafana.server_health(cfg))
+            else:
+                snapshot = {"active_incidents": store.query_incidents(conn, status="active", limit=12),
+                            "events_last_24h": {k: v for k, v in store.event_stats(conn, hours=24).items() if k != "hourly"}}
+                try:
+                    snapshot["infrastructure"] = grafana.server_health(cfg)
+                except grafana.GrafanaError:
+                    snapshot["infrastructure"] = "not connected"
+                data = json.dumps(snapshot, default=str)
+            return {"text": ai.brief(provider, body.kind, data, tz), "model": provider["model"]}
+        except grafana.GrafanaError as exc:
+            raise HTTPException(502, str(exc))
+        except ai.AIError as exc:
+            raise HTTPException(502, str(exc))
+
+
+@app.get("/api/v1/logs/labels")
+def logs_labels(user=User):
+    """Values for the log filter pickers. A label that Loki does not have simply comes back empty."""
+    with db() as conn:
+        cfg = get_integration(conn, "grafana")
+    out = {}
+    for name in ("job", "host", "program"):
+        try:
+            out[name] = grafana.loki_label_values(cfg, name)
+        except grafana.GrafanaError as exc:
+            if name == "job":
+                raise HTTPException(502, str(exc))
+            out[name] = []
+    return out
+
+
+@app.get("/api/v1/apps")
+def apps_catalog(user=User):
+    """The applications in the navbar switcher, each with its own menu."""
+    with db() as conn:
+        return apps.catalog(conn)
+
+
+@app.get("/api/v1/apps/{app_id}/{page_id}")
+def apps_page(app_id: str, page_id: str, request: Request, user=User):
+    """One read-only page of a connected application, described as tiles, bars and tables."""
+    with db() as conn:
+        try:
+            return apps.render(conn, app_id, page_id, dict(request.query_params))
+        except KeyError:
+            raise HTTPException(404, "That page does not exist")
+        except apps.NotConnected as exc:
+            return {"app": app_id, "page": page_id, "connected": False, "app_name": str(exc)}
+        except apps.errors() as exc:
+            raise HTTPException(502, str(exc))
+
+
+@app.get("/api/v1/infrastructure")
+def infrastructure(user=User):
+    """Live server health from Prometheus: targets, per-host resource use and HTTP probes."""
+    with db() as conn:
+        cfg = get_integration(conn, "grafana")
+    try:
+        return grafana.server_health(cfg)
+    except grafana.GrafanaError as exc:
+        raise HTTPException(502, str(exc))
 
 
 @app.get("/api/v1/incidents")
@@ -396,7 +640,7 @@ def ai_chat_stream(body: ChatBody, user=User):
             audit(conn, user["username"], "ai.query", {"question": body.message[:500], "conversation_id": conversation_id})
             history = [{"role": m["role"], "content": m["content"][:8000]} for m in messages[-HISTORY_FOR_MODEL:]]
             try:
-                for step in ai.investigate_steps(conn, provider, history, user["username"]):
+                for step in ai.investigate_steps(conn, provider, history, user["username"], body.tz_offset):
                     if step["type"] == "final":
                         answer = {"role": "assistant", "content": step["reply"], "trace": step["trace"],
                                   "model": step["model"], "tools_supported": step["tools_supported"],

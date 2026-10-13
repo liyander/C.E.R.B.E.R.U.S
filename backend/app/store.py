@@ -144,14 +144,15 @@ def incident_dict(row) -> dict:
     return d
 
 
-def query_events(conn, *, q="", asset="", asset_id=None, source="", source_ip="", incident_id=None,
-                 min_severity=1, hours=None, limit=100) -> list[dict]:
+def _event_filters(*, q="", asset="", asset_id=None, source="", source_ip="", incident_id=None,
+                   min_severity=1, hours=None, start="", end="") -> tuple[list[str], list]:
+    """WHERE clauses shared by the event list and its statistics (expects aliases e and a)."""
     where, params = ["e.severity >= ?"], [clamp(min_severity, 1, 10, 1)]
     if q := text(q, 100):
         like = f"%{q}%"
         where.append("(e.title LIKE ? OR e.message LIKE ? OR e.rule_id LIKE ? OR e.username LIKE ? "
-                     "OR e.source_ip LIKE ? OR a.name LIKE ?)")
-        params += [like] * 6
+                     "OR e.source_ip LIKE ? OR e.event_type LIKE ? OR a.name LIKE ?)")
+        params += [like] * 7
     if asset := text(asset, 120):
         where.append("(a.name = ? COLLATE NOCASE OR a.ip = ?)")
         params += [asset, asset]
@@ -170,12 +171,48 @@ def query_events(conn, *, q="", asset="", asset_id=None, source="", source_ip=""
     if hours:
         where.append("e.ts >= ?")
         params.append(ago(hours=clamp(hours, 1, 720, 24)))
+    if start:
+        where.append("e.ts >= ?")
+        params.append(parse_ts(start))
+    if end:
+        where.append("e.ts < ?")
+        params.append(parse_ts(end))
+    return where, params
+
+
+EVENT_FROM = "FROM events e LEFT JOIN assets a ON a.id = e.asset_id"
+
+
+def query_events(conn, *, limit=100, **filters) -> list[dict]:
+    where, params = _event_filters(**filters)
     rows = conn.execute(
-        "SELECT e.*, a.name AS asset_name FROM events e LEFT JOIN assets a ON a.id = e.asset_id "
-        f"WHERE {' AND '.join(where)} ORDER BY e.ts DESC, e.id DESC LIMIT ?",
-        params + [clamp(limit, 1, 500, 100)],
-    ).fetchall()
+        f"SELECT e.*, a.name AS asset_name {EVENT_FROM} WHERE {' AND '.join(where)} "
+        "ORDER BY e.ts DESC, e.id DESC LIMIT ?", params + [clamp(limit, 1, 500, 100)]).fetchall()
     return [event_dict(r) for r in rows]
+
+
+def event_stats(conn, *, hours=24, **filters) -> dict:
+    """Hourly counts by severity plus the main breakdowns, for charts. Buckets are UTC hours."""
+    hours = clamp(hours, 1, 168, 24)
+    current = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    slots = [current - timedelta(hours=offset) for offset in range(hours - 1, -1, -1)]
+    buckets = {h.strftime("%Y-%m-%dT%H"): {"hour": iso(h), "critical": 0, "high": 0, "medium": 0, "low": 0} for h in slots}
+    where, params = _event_filters(**filters, start=iso(slots[0]))
+    clause = " AND ".join(where)
+    for row in conn.execute(f"SELECT substr(e.ts, 1, 13) AS hour, e.severity, COUNT(*) AS n {EVENT_FROM} "
+                            f"WHERE {clause} GROUP BY hour, e.severity", params):
+        if row["hour"] in buckets:
+            buckets[row["hour"]][severity_label(row["severity"])] += row["n"]
+
+    def top(column: str, extra: str = "") -> list[dict]:
+        return [dict(r) for r in conn.execute(
+            f"SELECT {column} AS name, COUNT(*) AS count {EVENT_FROM} WHERE {clause} {extra} "
+            "GROUP BY name ORDER BY count DESC, name LIMIT 6", params)]
+
+    hourly = list(buckets.values())
+    return {"hours": hours, "hourly": hourly, "total": sum(b["critical"] + b["high"] + b["medium"] + b["low"] for b in hourly),
+            "sources": top("e.source"), "types": top("e.event_type"),
+            "ips": top("e.source_ip", "AND e.source_ip != ''"), "assets": top("a.name", "AND a.name IS NOT NULL")}
 
 
 def query_incidents(conn, *, status="", min_severity=1, limit=100) -> list[dict]:

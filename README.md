@@ -53,6 +53,36 @@ Grafana must be able to reach CERBERUS, so if it runs on another machine start w
 Other engines (Wazuh, Snort, WAF…) can push normalised events to
 `POST /api/v1/ingest/events` with the same bearer token until they get dedicated adapters.
 
+## Logs, infrastructure and charts
+
+With Grafana connected (see above), two pages read your telemetry live:
+
+- **Logs** searches Loki: pick a host, program, level and time range, or write LogQL yourself.
+  It charts line volume by level and lists the newest lines. Click a host or program to filter.
+- **Infrastructure** reads Prometheus: CPU, memory and disk per host, every scrape target's
+  up/down state, and response times of web checks. It refreshes every 30 seconds.
+
+**Events** shows volume over 24 hours or 7 days with breakdowns by source, type, source IP and
+asset. Across the app: click a chart bar to open the matching events, click a legend entry to
+hide a series, click a column heading to sort, press `Ctrl K` to jump anywhere and `?` for
+the shortcut list.
+
+## AI watch
+
+A scheduled analyst on the **AI watch** page. Every few minutes it checks, on its own: scrape
+targets and web checks that are down, disk, memory and CPU against limits you set, load above
+the host's core count, and bursts of error lines in the logs. When something starts it records
+a finding, opens an incident, has the model explain since when and what to do, and tells you in
+the app and by email (one message per check, not one per problem). When it stops, the finding is
+marked recovered and its incident closed. A problem that flaps is announced at most once per
+quiet period. A daily digest goes to the admins.
+
+A finding you have seen and accept for now can be **dismissed**: it is hidden and no longer counted
+until it recovers and then happens again. Dismissed findings can be restored.
+
+It is off until an admin turns it on. The checks are plain thresholds, so they keep working
+with no AI model connected; the model only writes the explanation.
+
 ## Users and roles
 
 The first account is the **admin**. Admins add people under **Users** and choose a role:

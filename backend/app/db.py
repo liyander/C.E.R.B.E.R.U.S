@@ -143,6 +143,31 @@ CREATE TABLE IF NOT EXISTS emails (
     created_at TEXT NOT NULL,
     sent_at TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS watch_findings (
+    key TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    asset TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    severity INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'firing',
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    incident_id INTEGER,
+    last_notified TEXT NOT NULL DEFAULT '',
+    ai_note TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS watch_runs (
+    id INTEGER PRIMARY KEY,
+    ts TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    ok INTEGER NOT NULL,
+    firing INTEGER NOT NULL DEFAULT 0,
+    fresh INTEGER NOT NULL DEFAULT 0,
+    recovered INTEGER NOT NULL DEFAULT 0,
+    error TEXT NOT NULL DEFAULT '',
+    seconds REAL NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS audit_logs (
     id INTEGER PRIMARY KEY,
     ts TEXT NOT NULL,

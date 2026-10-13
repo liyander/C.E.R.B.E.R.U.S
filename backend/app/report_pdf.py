@@ -15,12 +15,14 @@ from fpdf.fonts import FontFace
 logging.getLogger("fontTools").setLevel(logging.ERROR)
 
 INK = (12, 23, 25)
+NAVY = (29, 45, 61)
 BODY = (45, 58, 61)
 QUIET = (107, 124, 127)
 RULE = (223, 230, 231)
 ACCENT = (15, 118, 110)
 PANEL = (244, 247, 247)
 LOGO = Path(__file__).parent / "assets" / "logo.png"
+BRAND_FONT = Path(__file__).parent / "assets" / "fonts" / "BarlowCondensed-SemiBold.ttf"
 
 # (regular, bold, italic, monospace) - first complete set that exists wins
 FONT_SETS = [
@@ -113,16 +115,23 @@ def build(title: str, requested_by: str, generated: str, question: str, markdown
     width = pdf.epw
 
     # Cover band
-    pdf.set_fill_color(*INK)
+    pdf.set_fill_color(*NAVY)
     pdf.rect(0, 0, pdf.w, 30, style="F")
     pdf.set_fill_color(*ACCENT)
     pdf.rect(0, 30, pdf.w, 1.4, style="F")
     if LOGO.exists():
         pdf.image(str(LOGO), x=18, y=8, w=14)
-    pdf.set_xy(36, 9)
-    pdf.set_font(pdf.base, "B", 14)
-    pdf.set_text_color(255, 255, 255)
-    pdf.cell(60, 7, "C E R B E R U S", new_x=XPos.LEFT, new_y=YPos.NEXT)
+    pdf.set_xy(36, 8.5)
+    pdf.set_text_color(242, 242, 243)
+    if BRAND_FONT.exists():
+        pdf.add_font("brand", "", str(BRAND_FONT))
+        pdf.set_font("brand", "", 21)
+        pdf.set_char_spacing(2.1)
+        pdf.cell(60, 8, "CERBERUS", new_x=XPos.LEFT, new_y=YPos.NEXT)
+        pdf.set_char_spacing(0)
+    else:
+        pdf.set_font(pdf.base, "B", 14)
+        pdf.cell(60, 8, "C E R B E R U S", new_x=XPos.LEFT, new_y=YPos.NEXT)
     pdf.set_font(pdf.base, "", 8.5)
     pdf.set_text_color(143, 163, 166)
     pdf.cell(60, 5, "Security operations")

@@ -429,6 +429,38 @@ def report_message(requested_by: str, subject: str, question: str, report_md: st
     return report_email(requested_by, subject, question, report_md, app_url, attachment[0]), [attachment]
 
 
+def watch_email(findings: list[dict], writeup_md: str, worst: int, app_url: str) -> tuple[str, str, str]:
+    count = len(findings)
+    first = findings[0]["title"]
+    listing = "\n".join(f"- **{f['title']}**: {f['detail']}" for f in findings)
+    body = md_to_html(listing)
+    if writeup_md:
+        body += (f'<p style="margin:26px 0 8px;font-size:13px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:{QUIET}">'
+                 "AI analyst</p>" + md_to_html(writeup_md))
+    critical = worst >= 9
+    return (f"[CERBERUS watch] {first}" + (f" and {count - 1} more" if count > 1 else ""),
+            layout(banner="watch-critical" if critical else "watch", accent="#b91c1c" if critical else "#b45309",
+                   headline=first if count == 1 else f"[[{count} conditions]] need attention",
+                   lead="The scheduled AI analyst found this during its latest check of your servers and logs.",
+                   button=("Open AI watch", f"{app_url}/#/watch") if app_url else None, body_html=body,
+                   note="You receive this as a CERBERUS admin. Limits, quiet periods and these emails can be changed on the AI watch page.",
+                   preheader=first),
+            f"CERBERUS watch: {count} new condition(s)\n\n" + "\n".join(f"- {f['title']}: {f['detail']}" for f in findings)
+            + (f"\n\nAI analyst:\n{writeup_md}" if writeup_md else ""))
+
+
+def digest_email(text_md: str, firing: int, app_url: str) -> tuple[str, str, str]:
+    day = datetime.now(timezone.utc).strftime("%d %b %Y")
+    status = f"{firing} condition{'' if firing == 1 else 's'} need{'s' if firing == 1 else ''} attention" if firing else "Nothing needs attention right now"
+    return (f"[CERBERUS] Daily digest, {day}",
+            layout(banner="digest", headline="Your daily [[security digest]]", lead=f"The last 24 hours, as of {stamp()}.",
+                   key_line=status, accent="#b45309" if firing else ACCENT, body_html=md_to_html(text_md),
+                   button=("Open CERBERUS", app_url) if app_url else None,
+                   note="Sent once a day by the AI watch. The time, or the digest itself, can be changed on the AI watch page.",
+                   preheader=status),
+            f"CERBERUS daily digest, {day}\n{status}\n\n{text_md}")
+
+
 def announcement_email(title: str, message_md: str, level: str, author: str, audience: str = "all") -> tuple[str, str, str]:
     label = LEVEL_LABELS.get(level, LEVEL_LABELS["info"])
     prefix = "" if level == "info" else f"[{label}] "

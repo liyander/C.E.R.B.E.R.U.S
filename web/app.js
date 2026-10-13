@@ -8,7 +8,7 @@
   const REFRESH_MS = 30000;
   const CHAT_KEY = 'cerberus-chat-id';
   const APP_VERSION = '0.2.0'; // must match VERSION in backend/app/main.py
-  const state = { user: null, chat: [], chatId: null, convos: [], busy: false, live: null, abort: null, presets: [], emailReady: false, aiReady: false, aiTools: [], investigating: false };
+  const state = { user: null, chat: [], chatId: null, convos: [], busy: false, live: null, abort: null, presets: [], hidden: {}, sorts: {}, emailReady: false, aiReady: false, aiTools: [], investigating: false };
 
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -65,13 +65,21 @@
     bell: 'M6 16v-5a6 6 0 0112 0v5l2 2H4zM10 20a2 2 0 004 0',
     users: 'M9 11a4 4 0 100-8 4 4 0 000 8zM2 21a7 7 0 0114 0M17 4a4 4 0 010 7M18 14a7 7 0 014 7',
     megaphone: 'M4 10v4h3l6 4V6l-6 4zM17 9a4 4 0 010 6',
+    chevron: 'M6 15l6-6 6 6',
     user: 'M12 12a4 4 0 100-8 4 4 0 000 8zM4 21a8 8 0 0116 0',
+    eye: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 15a3 3 0 100-6 3 3 0 000 6z',
+    terminal: 'M4 5h16v14H4zM7 9l3 3-3 3M12 15h5',
+    activity: 'M3 12h4l3-8 4 16 3-8h4',
+    play: 'M8 5l11 7-11 7z',
+    panel: 'M4 5h16v14H4zM10 5v14',
+    download: 'M12 4v11M7 11l5 5 5-5M5 20h14',
+    star: 'M12 4l2.400 5 5.600.800-4 3.900.900 5.500-4.900-2.600-4.900 2.600.900-5.500-4-3.900 5.600-.800z',
     mail: 'M3 6h18v12H3zM3 7l9 6 9-6',
   };
   const icon = (name, size = 18) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.700" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
 
-  // Three guardian heads on a tile that follows the chosen accent palette.
-  const logo = () => `<svg viewBox="0 0 64 64" role="img" aria-label="CERBERUS"><defs><linearGradient id="logo-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" class="logo-a"/><stop offset="1" class="logo-b"/></linearGradient><radialGradient id="logo-h" cx=".3" cy=".1" r=".9"><stop offset="0" stop-color="#fff" stop-opacity=".28"/><stop offset=".6" stop-color="#fff" stop-opacity="0"/></radialGradient></defs><rect width="64" height="64" rx="15" fill="url(#logo-g)"/><rect width="64" height="64" rx="15" fill="url(#logo-h)"/><rect x=".75" y=".75" width="62.500" height="62.500" rx="14.250" fill="none" stroke="#fff" stroke-opacity=".2" stroke-width="1.500"/><g fill="#fff"><g opacity=".5"><path transform="translate(17.500 29.500) rotate(-20) scale(.66) translate(-32 -32)" d="M20.500 12 27 21.500 32 19.500 37 21.500 43.500 12 46.500 30 40.500 42.500 32 53 23.500 42.500 17.500 30Z"/><path transform="translate(46.500 29.500) rotate(20) scale(.66) translate(-32 -32)" d="M20.500 12 27 21.500 32 19.500 37 21.500 43.500 12 46.500 30 40.500 42.500 32 53 23.500 42.500 17.500 30Z"/></g><path d="M20.500 12 27 21.500 32 19.500 37 21.500 43.500 12 46.500 30 40.500 42.500 32 53 23.500 42.500 17.500 30Z" stroke="rgba(6,40,48,.28)" stroke-width="1.600" stroke-linejoin="round" paint-order="stroke"/></g><path d="M22.800 29.600 30 33.400 29.300 36.300 24.200 34.300ZM41.200 29.600 34 33.400 34.700 36.300 39.800 34.300ZM29.800 45.600h4.400L32 48.800Z" fill="#0a2f38"/></svg>`;
+  // The CERBERUS mark: a three-peak pulse crossing a dotted threshold line.
+  const logo = () => `<svg class="logo-mark" viewBox="0 0 143 100" role="img" aria-label="CERBERUS"><g class="logo-dash"><rect x="4.0" y="34" width="7" height="4.500"/><rect x="17.6" y="34" width="7" height="4.500"/><rect x="31.2" y="34" width="7" height="4.500"/><rect x="44.8" y="34" width="7" height="4.500"/><rect x="58.4" y="34" width="7" height="4.500"/><rect x="72.0" y="34" width="7" height="4.500"/><rect x="85.6" y="34" width="7" height="4.500"/><rect x="99.2" y="34" width="7" height="4.500"/><rect x="112.8" y="34" width="7" height="4.500"/><rect x="126.4" y="34" width="7" height="4.500"/></g><path d="M0 77H27.300L44.500 32 56.700 62 67 0H76L86.300 62 98.500 32 115.700 77H143V86H108.800L98.500 59 82.800 99.500 71.500 29 60.200 99.500 44.500 59 34.200 86H0Z" fill="currentColor"/></svg>`;
   const ACCENTS = [['teal', 'Teal', '#0f766e'], ['indigo', 'Indigo', '#4f46e5'], ['blue', 'Blue', '#2563eb'], ['violet', 'Violet', '#7c3aed']];
   const pref = {
     get(key, fallback) { try { return localStorage.getItem(`cerberus-${key}`) || fallback; } catch { return fallback; } },
@@ -319,31 +327,52 @@
   // [section, [[route, label, icon, adminOnly]]]
   const NAV = [
     ['', [['overview', 'Overview', 'home']]],
-    ['Operate', [['console', 'Enforcer console', 'chat'], ['incidents', 'Incidents', 'alert'], ['events', 'Events', 'list'],
-      ['assets', 'Assets', 'server'], ['approvals', 'Approvals', 'check']]],
+    ['Investigate', [['console', 'Enforcer console', 'chat'], ['incidents', 'Incidents', 'alert'], ['events', 'Events', 'list'], ['approvals', 'Approvals', 'check']]],
+    ['Monitor', [['watch', 'AI watch', 'eye'], ['logs', 'Logs', 'terminal'], ['infrastructure', 'Infrastructure', 'activity'], ['assets', 'Assets', 'server']]],
     ['Administer', [['users', 'Users', 'users', true], ['announcements', 'Announcements', 'megaphone', true],
       ['providers', 'AI providers', 'spark', true], ['integrations', 'Integrations', 'plug', true], ['audit', 'Audit log', 'clock', true]]],
   ];
+  const closedGroups = () => pref.get('navclosed', '').split(',').filter(Boolean);
   const ADMIN_VIEWS = new Set(NAV.flatMap(([, items]) => items).filter((item) => item[3]).map((item) => item[0]));
   const TITLES = { account: 'My account', ...Object.fromEntries(NAV.flatMap(([, items]) => items).map(([id, text]) => [id, text])) };
 
   function ensureShell() {
     if ($('.shell')) return;
     const visible = NAV.map(([label, items]) => [label, items.filter((item) => !item[3] || isAdmin())]).filter(([, items]) => items.length);
-    const nav = visible.map(([label, items]) => `${label ? `<div class="nav-label">${label}</div>` : ''}${items.map(([id, text, ic]) =>
-      `<a href="#/${id}" data-nav="${id}" title="${text}">${icon(ic)}<span>${text}</span>${
-        id === 'incidents' ? '<span class="count quiet" data-badge="incidents" hidden></span>' : ''}${
-        id === 'approvals' ? '<span class="count" data-badge="approvals" hidden></span>' : ''}</a>`).join('')}`).join('');
+    const badges = { incidents: 'incidents', watch: 'watch', approvals: 'approvals' };
+    const link = ([id, text, ic]) => `<a href="#/${id}" data-nav="${id}" data-tip="${text}" aria-label="${text}">${icon(ic)}<span>${text}</span>${
+      badges[id] ? `<span class="count" data-badge="${id}" hidden></span>` : ''}</a>`;
+    const nav = visible.map(([label, items]) => {
+      if (!label) return items.map(link).join('');
+      const closed = closedGroups().includes(label);
+      return `<div class="nav-group ${closed ? 'closed' : ''}" data-group="${label}">
+        <button type="button" class="nav-label" data-action="nav-group" aria-expanded="${!closed}"><span>${label}</span>${icon('chevron', 13)}</button>
+        <div class="nav-items">${items.map(link).join('')}</div></div>`;
+    }).join('');
     app.innerHTML = `
       <div class="shell ${pref.get('sidebar', 'open') === 'rail' ? 'rail' : ''}">
         <aside class="sidebar">
-          <a class="brand" href="#/overview" title="CERBERUS">${logo()}<div><b>CERBERUS</b><small>Security operations</small></div></a>
+          <div class="brand-row"><a class="brand" href="#/overview" aria-label="CERBERUS, go to Overview" data-tip="Overview">${logo()}<div><b>CERBERUS</b><small>Security operations</small></div></a>
+            <button class="side-collapse" data-action="drawer" aria-label="Collapse or expand the sidebar" data-tip="Expand sidebar">${icon('panel', 17)}</button></div>
           <form class="quick" data-form="quick">${icon('search', 16)}
             <input type="text" name="q" id="quick" placeholder="Search or jump to…" autocomplete="off" aria-label="Search or jump to a page" readonly><kbd>Ctrl K</kbd></form>
-          <nav class="nav">${nav}</nav>
-          <div class="side-foot"><a class="initial" href="#/account" title="My account">${esc(state.user.username.slice(0, 1))}</a>
-            <a class="me" href="#/account" title="My account"><b>${esc(state.user.username)}</b><small>${roleName(state.user.role)}</small></a>
-            <button class="btn ghost icon" data-action="logout" title="Sign out" aria-label="Sign out">${icon('logout')}</button></div>
+          <nav class="nav" aria-label="Main">${nav}</nav>
+          <div class="side-status">
+            <a href="#/console" id="ss-ai" data-tip="AI analyst"><span class="dot"></span><span class="ss-text"><b>AI analyst</b><small>Checking…</small></span></a>
+            <a href="#/watch" id="ss-watch" data-tip="AI watch"><span class="dot"></span><span class="ss-text"><b>AI watch</b><small>Checking…</small></span></a>
+          </div>
+          <div class="side-foot pop-wrap">
+            <button class="side-user" data-action="menu" aria-label="Account menu" data-tip="${esc(state.user.username)}">
+              <span class="initial">${esc(state.user.username.slice(0, 1))}</span>
+              <span class="me"><b>${esc(state.user.username)}</b><small>${roleName(state.user.role)}</small></span>${icon('chevron', 14)}</button>
+            <div class="pop menu up" hidden>
+              <a class="menu-item" href="#/account">${icon('user', 16)}<span>My account</span></a>
+              <button class="menu-item" data-action="theme">${icon('moon', 16)}<span>Switch light or dark</span></button>
+              <button class="menu-item" data-action="shortcuts">${icon('terminal', 16)}<span>Keyboard shortcuts</span></button>
+              <div class="menu-sep"></div>
+              <button class="menu-item danger" data-action="logout">${icon('logout', 16)}<span>Sign out</span></button>
+            </div>
+          </div>
         </aside>
         <div class="scrim" data-action="drawer"></div>
         <div class="main">
@@ -369,10 +398,16 @@
   }
 
   function setBadges(o) {
-    const set = (name, n) => { const el = $(`[data-badge="${name}"]`); if (el) { el.textContent = n; el.hidden = !n; } };
-    set('incidents', o.open_incidents);
+    const set = (name, n, tone = '') => { const el = $(`[data-badge="${name}"]`); if (el) { el.textContent = n > 99 ? '99+' : n; el.hidden = !n; if (name !== 'notifications') el.className = `count ${tone}`; } };
+    set('incidents', o.open_incidents, o.critical ? 'crit' : 'quiet');
+    // Small status rows at the bottom of the sidebar.
+    const row = (id, tone, text) => { const el = $(id); if (el) { $('.dot', el).className = `dot ${tone}`; $('small', el).textContent = text; } };
+    row('#ss-ai', o.ai_provider ? 'on' : 'off', o.ai_provider ? (o.ai_provider.model || o.ai_provider.name) : 'Not connected');
+    const firing = (o.watch && o.watch.firing) || 0;
+    row('#ss-watch', o.watch && o.watch.enabled ? (firing ? 'off' : 'on') : '', o.watch && o.watch.enabled ? (firing ? `${firing} need${firing === 1 ? 's' : ''} attention` : 'On · all clear') : 'Off');
     set('approvals', o.pending_approvals);
     set('notifications', o.unread_notifications || 0);
+    set('watch', firing, 'warn');
     state.emailReady = Boolean(o.email_configured);
     state.stale = o.version !== APP_VERSION;
     const stale = $('#stale');
@@ -391,11 +426,11 @@
   const empty = (title, text, extra = '', ic = 'inbox') => `<div class="card empty">${icon(ic, 34)}<h3>${title}</h3><div>${text}</div>${extra}</div>`;
 
   const incidentTable = (list, withStatus) => `<div class="card"><div class="table-scroll"><table>
-    <tr><th>Incident</th>${withStatus ? '<th>Status</th>' : ''}<th>Severity</th><th>Asset</th><th>Source IP</th><th>Events</th><th>Last seen</th></tr>
+    <tr><th data-sort="text">Incident</th>${withStatus ? '<th data-sort="text">Status</th>' : ''}<th data-sort="num">Severity</th><th data-sort="text">Asset</th><th data-sort="text">Source IP</th><th data-sort="num">Events</th><th data-sort="num">Last seen</th></tr>
     ${list.map((i) => `<tr class="clickable sev-${esc(i.severity_label)}" data-href="#/incidents/${i.id}">
       <td class="wrap"><strong>${esc(i.ref)}</strong> ${esc(i.title)}${demoBadge(i.demo)}</td>
-      ${withStatus ? `<td>${statusBadge(i.status)}</td>` : ''}<td>${sevBadge(i.severity_label, i.severity)}</td><td>${esc(i.asset_name || '—')}</td>
-      <td class="mono">${esc(i.source_ip || '—')}</td><td>${i.event_count}</td><td class="nowrap">${agoCell(i.last_seen)}</td></tr>`).join('')}
+      ${withStatus ? `<td>${statusBadge(i.status)}</td>` : ''}<td data-v="${i.severity}">${sevBadge(i.severity_label, i.severity)}</td><td>${esc(i.asset_name || '—')}</td>
+      <td class="mono">${esc(i.source_ip || '—')}</td><td>${i.event_count}</td><td class="nowrap" data-v="${Date.parse(i.last_seen) || 0}">${agoCell(i.last_seen)}</td></tr>`).join('')}
   </table></div></div>`;
 
   // ---------- views: each returns an HTML string or { html, mount } ----------
@@ -414,58 +449,98 @@
   };
   const hourLabel = (iso) => `${String(new Date(iso).getHours()).padStart(2, '0')}:00`;
 
-  // Stacked columns: events per hour for the last 24 hours, split by severity.
-  function drawEventsChart() {
-    const el = $('#events-chart');
-    const data = state.hourly;
-    if (!el || !data) return;
-    if (!data.some(hourTotal)) { el.innerHTML = '<div class="chart-empty">No events in the last 24 hours.</div>'; return; }
+  const fmtNum = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}K` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : String(n));
+  const clock = (ms) => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+  const dayName = (ms) => new Date(ms).toLocaleDateString([], { weekday: 'short' });
+
+  // Stacked columns over time, shared by every time chart in the app.
+  // data: buckets with a start time `t` (ms) and one count per series key.
+  // opts: series [[key, label, cssClass]] (first is drawn on top), group (legend toggle group), span (ms per bucket),
+  //       unit [singular, plural], empty (text), axis(bucket, index, count) -> label or '', onPick(bucket) for click-through.
+  const charts = new Map();
+  function stackChart(id, data, opts) {
+    charts.set(id, () => stackChart(id, data, opts));
+    const el = document.getElementById(id);
+    if (!el) return;
+    const hidden = state.hidden[opts.group] || new Set();
+    const series = opts.series.filter(([k]) => !hidden.has(k));
+    const total = (b) => series.reduce((n, [k]) => n + (b[k] || 0), 0);
+    if (!data.length || !data.some(total)) { el.innerHTML = `<div class="chart-empty">${esc(hidden.size ? 'Nothing to show for the selected series.' : opts.empty)}</div>`; return; }
     const W = Math.max(300, el.clientWidth);
     const H = 220;
-    const m = { l: 36, r: 6, t: 10, b: 24 };
+    const m = { l: 44, r: 6, t: 10, b: 24 };
     const pw = W - m.l - m.r;
     const ph = H - m.t - m.b;
-    const max = niceMax(Math.max(...data.map(hourTotal)));
+    const max = niceMax(Math.max(...data.map(total)));
     const y = (v) => m.t + ph - (v / max) * ph;
     const band = pw / data.length;
-    const bw = Math.min(24, Math.max(4, band - 4));
+    const bw = Math.min(24, Math.max(2, band - (band > 9 ? 4 : 1)));
+    const gap = band > 9 ? 2 : 0; // 2px surface gap between stacked segments when there is room for it
     let grid = ''; let hits = ''; let bars = ''; let labels = '';
     for (const t of [0, max / 2, max]) {
-      grid += `<line class="${t ? 'grid' : 'axis'}" x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}"/><text class="tick" x="${m.l - 7}" y="${y(t) + 4}" text-anchor="end">${t}</text>`;
+      grid += `<line class="${t ? 'grid' : 'axis'}" x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}"/><text class="tick" x="${m.l - 7}" y="${y(t) + 4}" text-anchor="end">${fmtNum(t)}</text>`;
     }
-    data.forEach((h, i) => {
+    const stack = [...series].reverse();
+    data.forEach((b, i) => {
       const x = m.l + i * band + (band - bw) / 2;
       hits += `<rect class="hit" data-i="${i}" x="${m.l + i * band}" y="${m.t}" width="${band}" height="${ph}"/>`;
-      const parts = ['low', 'medium', 'high', 'critical'].filter((k) => h[k] > 0);
+      const parts = stack.filter(([k]) => b[k] > 0);
       let acc = 0;
-      parts.forEach((k, j) => {
-        const top = y(acc + h[k]);
-        const height = Math.max(1, y(acc) - top - (j ? 2 : 0)); // 2px surface gap between stacked segments
-        acc += h[k];
+      parts.forEach(([k, , cls], j) => {
+        const top = y(acc + b[k]);
+        const height = Math.max(1, y(acc) - top - (j ? gap : 0));
+        acc += b[k];
         if (j === parts.length - 1) {
           const r = Math.min(4, bw / 2, height);
-          bars += `<path class="seg sev-${k}" d="M${x},${top + height}V${top + r}Q${x},${top} ${x + r},${top}H${x + bw - r}Q${x + bw},${top} ${x + bw},${top + r}V${top + height}Z"/>`;
-        } else bars += `<rect class="seg sev-${k}" x="${x}" y="${top}" width="${bw}" height="${height}"/>`;
+          bars += `<path class="seg ${cls}" d="M${x},${top + height}V${top + r}Q${x},${top} ${x + r},${top}H${x + bw - r}Q${x + bw},${top} ${x + bw},${top + r}V${top + height}Z"/>`;
+        } else bars += `<rect class="seg ${cls}" x="${x}" y="${top}" width="${bw}" height="${height}"/>`;
       });
-      if ((data.length - 1 - i) % 4 === 0) labels += `<text class="tick" x="${m.l + i * band + band / 2}" y="${H - 6}" text-anchor="middle">${i === data.length - 1 ? 'now' : hourLabel(h.hour)}</text>`;
+      const label = opts.axis(b, i, data.length);
+      if (label) labels += `<text class="tick" x="${m.l + i * band + band / 2}" y="${H - 6}" text-anchor="middle">${esc(label)}</text>`;
     });
-    el.innerHTML = `<svg width="${W}" height="${H}" role="img" aria-label="Events per hour over the last 24 hours, stacked by severity. ${data.reduce((n, h) => n + hourTotal(h), 0)} events in total.">${grid}${hits}${bars}${labels}</svg><div class="chart-tip" hidden></div>`;
+    const sum = data.reduce((n, b) => n + total(b), 0);
+    el.innerHTML = `<svg width="${W}" height="${H}" role="img" aria-label="${esc(`${fmtNum(sum)} ${opts.unit[1]} over time, stacked by ${opts.group === 'sev' ? 'severity' : 'level'}.`)}">${grid}${hits}${bars}${labels}</svg><div class="chart-tip" hidden></div>`;
+    el.classList.toggle('pickable', Boolean(opts.onPick));
     const tip = $('.chart-tip', el);
     el.onmousemove = (e) => {
       const hit = e.target.closest('.hit');
       if (!hit) { tip.hidden = true; return; }
       const i = Number(hit.dataset.i);
-      const h = data[i];
-      const end = new Date(new Date(h.hour).getTime() + 3600000).toISOString();
-      tip.innerHTML = `<div class="tip-head">${hourLabel(h.hour)} – ${hourLabel(end)}</div><div class="tip-total">${hourTotal(h)} ${hourTotal(h) === 1 ? 'event' : 'events'}</div>${
-        SEVERITIES.filter(([k]) => h[k]).map(([k, name]) => `<div class="tip-row"><span class="sw sev-${k}"></span>${name}<b>${h[k]}</b></div>`).join('')}`;
+      const b = data[i];
+      tip.innerHTML = `<div class="tip-head">${opts.span >= 86400000 / 2 ? `${dayName(b.t)} ` : ''}${clock(b.t)} – ${clock(b.t + opts.span)}</div>
+        <div class="tip-total">${total(b).toLocaleString()} ${total(b) === 1 ? opts.unit[0] : opts.unit[1]}</div>${
+        series.filter(([k]) => b[k]).map(([k, name, cls]) => `<div class="tip-row"><span class="sw ${cls}"></span>${name}<b>${b[k].toLocaleString()}</b></div>`).join('')}${
+        opts.onPick && total(b) ? `<div class="tip-hint">${opts.pickHint || 'Click to see these events'}</div>` : ''}`;
       tip.hidden = false;
       const center = m.l + i * band + band / 2;
       tip.style.left = `${Math.min(Math.max(center - tip.offsetWidth / 2, 0), W - tip.offsetWidth)}px`;
     };
     el.onmouseleave = () => { tip.hidden = true; };
+    el.onclick = (e) => { const hit = e.target.closest('.hit'); if (hit && opts.onPick && total(data[Number(hit.dataset.i)])) opts.onPick(data[Number(hit.dataset.i)]); };
   }
-  window.addEventListener('resize', () => drawEventsChart());
+  window.addEventListener('resize', () => charts.forEach((draw) => draw()));
+
+  // Legend that doubles as a filter: click a series to hide or show it.
+  const legend = (group, series, totals) => `<div class="legend">${series.map(([k, name, cls]) =>
+    `<button type="button" class="lg ${(state.hidden[group] || new Set()).has(k) ? 'off' : ''}" data-action="legend" data-group="${group}" data-key="${k}" title="Click to hide or show"><i class="sw ${cls}"></i>${name} <b>${fmtNum(totals[k] || 0)}</b></button>`).join('')}</div>`;
+
+  const SEV_SERIES = SEVERITIES.map(([k, name]) => [k, name, `sev-${k}`]);
+  const sevTotals = (buckets) => Object.fromEntries(SEVERITIES.map(([k]) => [k, buckets.reduce((n, b) => n + b[k], 0)]));
+  // Hourly buckets from the API -> chart buckets, optionally merged `per` hours at a time.
+  function sevBuckets(hourly, per = 1) {
+    const out = [];
+    hourly.forEach((h, i) => {
+      if (i % per === 0) out.push({ t: Date.parse(h.hour), critical: 0, high: 0, medium: 0, low: 0 });
+      const b = out[out.length - 1];
+      SEVERITIES.forEach(([k]) => { b[k] += h[k]; });
+    });
+    return out;
+  }
+  const sevChart = (id, buckets, per, extraQuery = '') => stackChart(id, buckets, {
+    series: SEV_SERIES, group: 'sev', span: per * 3600000, unit: ['event', 'events'], empty: 'No events in this period.',
+    axis: (b, i, n) => (per === 1 ? ((n - 1 - i) % 4 === 0 ? (i === n - 1 ? 'now' : clock(b.t)) : '') : (new Date(b.t).getHours() < per ? dayName(b.t) : '')),
+    onPick: (b) => { location.hash = `#/events?start=${encodeURIComponent(new Date(b.t).toISOString())}&end=${encodeURIComponent(new Date(b.t + per * 3600000).toISOString())}${extraQuery}`; },
+  });
 
   const barList = (rows) => {
     const max = Math.max(1, ...rows.map((r) => r.value));
@@ -485,15 +560,19 @@
     const incidents = o.recent_incidents.length ? incidentTable(o.recent_incidents, false)
       : empty('No active incidents', 'Events arrive through the Grafana webhook or the ingest API.',
         o.has_demo_data || !admin ? '' : '<div style="margin-top:14px"><button class="btn" data-action="demo-load">Load demo data</button></div>', 'check');
-    state.hourly = o.hourly || [];
-    const sevTotals = SEVERITIES.map(([k, name]) => [k, name, state.hourly.reduce((n, h) => n + h[k], 0)]);
+    const buckets = sevBuckets(o.hourly || []);
     const html = `<div class="page">
       <div class="hero">
         <a class="pill" href="${admin ? '#/providers' : '#/console'}">${ai}</a>
+        <a class="pill" href="#/watch">${o.watch && o.watch.enabled
+          ? `<span class="dot ${o.watch.firing ? 'off' : 'on'}"></span> AI watch on · ${o.watch.firing ? `${o.watch.firing} need${o.watch.firing === 1 ? 's' : ''} attention` : 'all clear'}`
+          : '<span class="dot"></span> AI watch is off'}</a>
         <h1>Let's get to work.</h1>
         <form class="ask" data-form="ask">${icon('search', 20)}
           <input type="text" name="q" placeholder="Ask CERBERUS — e.g. “Show all suspicious activity on sietlms in the last 24 hours”" autocomplete="off" aria-label="Ask CERBERUS"></form>
       </div>
+      <div class="hero-actions"><button class="btn" data-action="ai-brief" data-kind="overview">${icon('spark', 16)} Brief me on the last 24 hours</button></div>
+      <div id="ai-insight"></div>
       <div class="stats">
         <a class="card stat" href="#/assets"><div class="ico">${icon('server', 20)}</div><div><b>${o.assets}</b><span>Assets</span></div></a>
         <a class="card stat ${o.open_incidents ? 'attn' : ''}" href="#/incidents"><div class="ico">${icon('alert', 20)}</div><div><b>${o.open_incidents}</b><span>Open incidents</span></div></a>
@@ -517,7 +596,7 @@
       </div>`}
       <div class="dash">
         <div class="card card-pad"><div class="section-head" style="margin-bottom:6px"><h2>Events in the last 24 hours</h2><a class="link small" href="#/events">View all events</a></div>
-          <div class="legend">${sevTotals.map(([k, name, n]) => `<span><i class="sw sev-${k}"></i>${name} <b>${n}</b></span>`).join('')}</div>
+          ${legend('sev', SEV_SERIES, sevTotals(buckets))}
           <div class="chart" id="events-chart"></div></div>
         <div class="card card-pad">
           <h2>Active incidents by severity</h2>
@@ -532,7 +611,7 @@
         ${o.has_demo_data && admin ? '<button class="btn sm ghost danger" data-action="demo-clear">Remove demo data</button>' : ''}</div></div>
       ${incidents}
     </div>`;
-    return { html, mount: drawEventsChart };
+    return { html, mount: () => sevChart('events-chart', buckets, 1) };
   };
 
   // ---------- console ----------
@@ -545,7 +624,9 @@
   ];
   const TOOL_LABELS = {
     search_events: 'Search events', list_incidents: 'List incidents', get_incident: 'Open incident', list_assets: 'List assets',
-    propose_response_action: 'Propose response action', get_server_health: 'Check server health',
+    propose_response_action: 'Propose response action', get_server_health: 'Check server health', get_metric_history: 'Check metric history',
+    wazuh_summary: 'Summarise Wazuh', search_wazuh_alerts: 'Search Wazuh alerts',
+    wazuh_agents: 'List Wazuh agents', wazuh_configuration_assessment: 'Read Wazuh configuration assessment',
     send_report_to_admins: 'Email report to admins',
     query_prometheus: 'Query Prometheus', query_loki: 'Query Loki',
   };
@@ -723,7 +804,7 @@
     try {
       const res = await fetch('/api/v1/ai/chat/stream', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-        body: JSON.stringify({ message: text, conversation_id: state.chatId }), signal: state.abort.signal,
+        body: JSON.stringify({ message: text, conversation_id: state.chatId, tz_offset: -new Date().getTimezoneOffset() }), signal: state.abort.signal,
       });
       if (res.status === 401) { state.user = null; boot(); return; }
       if (!res.ok) {
@@ -837,27 +918,347 @@
   }
 
   views.events = async ({ overview, params }) => {
-    const q = params.get('q') || '';
-    const min = params.get('min') || '1';
-    const source = params.get('source') || '';
-    const [events, o] = await Promise.all([
-      api(`/events?q=${encodeURIComponent(q)}&min_severity=${encodeURIComponent(min)}&source=${encodeURIComponent(source)}`), overview]);
-    return page('Events', `Normalised detections from every connected engine, newest first. ${events.length ? `Showing ${events.length}.` : ''}`,
-      `<form class="row" data-form="events-filter">
-        <input type="text" name="q" value="${esc(q)}" placeholder="Search title, message, IP, user, asset" style="width:280px" aria-label="Search">
+    const f = { q: params.get('q') || '', min: params.get('min') || '1', source: params.get('source') || '',
+      start: params.get('start') || '', end: params.get('end') || '', range: params.get('range') === '7d' ? '7d' : '24h' };
+    const enc = encodeURIComponent;
+    const filters = `q=${enc(f.q)}&min_severity=${enc(f.min)}&source=${enc(f.source)}`;
+    const [events, stats, o] = await Promise.all([
+      api(`/events?${filters}&start=${enc(f.start)}&end=${enc(f.end)}`), api(`/events/stats?hours=${f.range === '7d' ? 168 : 24}&${filters}`), overview]);
+    // Link to this page with some filters changed; the time window is dropped unless asked for.
+    const link = (change = {}) => {
+      const p = new URLSearchParams();
+      const next = { q: f.q, source: f.source, min: f.min === '1' ? '' : f.min, range: f.range === '7d' ? '7d' : '', ...change };
+      Object.entries(next).forEach(([k, v]) => { if (v) p.set(k, v); });
+      return `#/events${p.toString() ? `?${p}` : ''}`;
+    };
+    const per = f.range === '7d' ? 6 : 1;
+    const buckets = sevBuckets(stats.hourly, per);
+    const list = (title, rows, toChange) => `<div><h3>${title}</h3><div class="hbars">${rows.length
+      ? barList(rows.map((r) => ({ label: r.name, value: r.count, cls: 'series', href: link(toChange(r.name)) }))) : '<div class="muted small" style="padding:6px 0">Nothing yet</div>'}</div></div>`;
+    const html = page('Events', 'Normalised detections from every connected engine. Click a bar or a row in the charts to filter.',
+      `<form class="row" data-form="events-filter"><input type="hidden" name="range" value="${f.range}">
+        <input type="text" name="q" value="${esc(f.q)}" placeholder="Search title, message, type, IP, user, asset" style="width:280px" aria-label="Search">
         <select name="source" style="width:auto" aria-label="Source" data-change="submit-form"><option value="">All sources</option>
-          ${o.sources.map((s) => `<option value="${esc(s.source)}" ${s.source === source ? 'selected' : ''}>${esc(s.source)}</option>`).join('')}</select>
+          ${o.sources.map((s) => `<option value="${esc(s.source)}" ${s.source === f.source ? 'selected' : ''}>${esc(s.source)}</option>`).join('')}</select>
         <select name="min" style="width:auto" aria-label="Minimum severity" data-change="submit-form">${[['1', 'All severities'], ['4', 'Medium +'], ['7', 'High +'], ['9', 'Critical']]
-          .map(([v, t]) => `<option value="${v}" ${v === min ? 'selected' : ''}>${t}</option>`).join('')}</select>
-        <button class="btn">Search</button>${q || source || min !== '1' ? '<a class="btn ghost" href="#/events">Clear</a>' : ''}</form>`,
-      events.length ? `<div class="card">${eventTable(events)}</div>` : empty('No events match', 'Connect a source under Integrations, or widen the filter.', '', 'search'));
+          .map(([v, t]) => `<option value="${v}" ${v === f.min ? 'selected' : ''}>${t}</option>`).join('')}</select>
+        <button class="btn">Search</button>${f.q || f.source || f.min !== '1' || f.start ? '<a class="btn ghost" href="#/events">Clear</a>' : ''}</form>`,
+      `<div class="card card-pad">
+        <div class="section-head" style="margin-bottom:6px"><h2>Event volume <span class="muted small">· ${stats.total.toLocaleString()} in the last ${f.range === '7d' ? '7 days' : '24 hours'}</span></h2>
+          <div class="tabs"><a href="${link({ range: '' })}" class="${f.range === '24h' ? 'on' : ''}">24 hours</a><a href="${link({ range: '7d' })}" class="${f.range === '7d' ? 'on' : ''}">7 days</a></div></div>
+        ${legend('sev', SEV_SERIES, sevTotals(buckets))}
+        <div class="chart" id="events-volume"></div>
+        <div class="breakdowns">${list('By source', stats.sources, (name) => ({ source: name }))}${list('By type', stats.types, (name) => ({ q: name }))}
+          ${list('Top source IPs', stats.ips, (name) => ({ q: name }))}${list('Top assets', stats.assets, (name) => ({ q: name }))}</div>
+      </div>
+      ${f.start ? `<div class="callout info row" style="justify-content:space-between"><span>Showing events from <strong>${fmtTime(f.start)}</strong> to <strong>${fmtTime(f.end)}</strong>.</span><a class="btn sm" href="${link()}">Show all times</a></div>` : ''}
+      ${events.length ? `<div class="card">${eventTable(events)}</div>` : empty('No events match', 'Connect a source under Integrations, or widen the filter.', '', 'search')}`);
+    const keep = `${f.q ? `&q=${enc(f.q)}` : ''}${f.source ? `&source=${enc(f.source)}` : ''}${f.min !== '1' ? `&min=${enc(f.min)}` : ''}${f.range === '7d' ? '&range=7d' : ''}`;
+    return { html, mount: () => sevChart('events-volume', buckets, per, keep) };
+  };
+
+  // ---------- AI briefings ----------
+
+  // Ask the model for a short written briefing and show it in `target`. The server gathers the data.
+  async function aiBrief(target, body, title) {
+    const head = (extra = '') => `<div class="ai-head">${icon('spark', 16)}<b>${title}</b>${extra}</div>`;
+    target.innerHTML = `<div class="card ai-card">${head()}<div class="working"><span class="spinner"></span><span>Reading the data…</span></div></div>`;
+    try {
+      const r = await api('/ai/brief', { method: 'POST', body: { ...body, tz_offset: -new Date().getTimezoneOffset() } });
+      target.innerHTML = `<div class="card ai-card">${head(`<span class="muted small">${esc(r.model)}</span><span class="spacer"></span>
+        <button class="btn ghost sm" data-action="ai-copy">${icon('copy', 14)} Copy</button><button class="btn ghost icon sm" data-action="ai-dismiss" title="Dismiss" aria-label="Dismiss">${icon('close', 14)}</button>`)}${md(r.text)}</div>`;
+      target.dataset.text = r.text;
+    } catch (err) {
+      target.innerHTML = `<div class="callout">${esc(err.message)}</div>`;
+    }
+    // Remembered so a background refresh of the page does not wipe it.
+    if (target.id === 'ai-insight') state.insight = { key: current, html: target.innerHTML, text: target.dataset.text || '' };
+  }
+  const BRIEF_TITLES = { overview: 'AI brief: the last 24 hours', infrastructure: 'AI health brief', logs: 'AI summary of these logs' };
+
+  // ---------- AI watch (scheduled analyst) ----------
+
+  const KIND_ICON = { disk: 'server', memory: 'activity', cpu: 'activity', load: 'activity', probe: 'plug', target: 'plug', logerr: 'terminal' };
+
+  views.watch = async ({ params }) => {
+    const w = await api('/watch');
+    const s = w.settings;
+    const admin = isAdmin();
+    const wanted = params.get('tab');
+    const tab = wanted === 'history' || (wanted === 'settings' && admin) ? wanted : 'now';
+    const firing = w.findings.filter((x) => x.status === 'firing');
+    const dismissed = w.findings.filter((x) => x.status === 'dismissed');
+    const recovered = w.findings.filter((x) => x.status === 'recovered');
+    const band = (x) => (x.severity >= 9 ? 'critical' : x.severity >= 7 ? 'high' : 'medium');
+    const critical = firing.filter((x) => x.severity >= 9).length;
+    // The analyst writes one note for all the findings of a check, so it is shown once, not on every finding.
+    const notes = [...new Set(firing.map((x) => x.ai_note).filter(Boolean))];
+    const ready = (ok, yes, no, href) => `<span class="${ok ? '' : 'warn'}">${ok ? icon('check', 13) : icon('alert', 13)} ${ok ? yes : (admin && href ? `<a href="${href}">${no}</a>` : no)}</span>`;
+    const asked = (x) => encodeURIComponent(`${x.title}. Since when has this been the case, what is the likely cause, and what should I do?`);
+    const untilNext = w.next_run ? Math.max(0, Math.round((Date.parse(w.next_run) - Date.now()) / 60000)) : null;
+    const lastRun = w.runs[0];
+    const row = (x) => `<div class="frow sev-${band(x)} ${x.status}">
+      <span class="frow-ic">${icon(KIND_ICON[x.kind] || 'alert', 18)}</span>
+      <div class="frow-main"><b>${esc(x.title)}</b><span>${esc(x.detail)}</span>
+        <div class="fd-meta">${x.status === 'recovered' ? `From ${fmtTime(x.first_seen)} to ${fmtTime(x.last_seen)}` : `Since ${fmtTime(x.first_seen)} · ${ago(x.first_seen)}`}
+          ${x.incident_id ? `<a class="ref" href="#/incidents/${x.incident_id}">INC-${String(x.incident_id).padStart(4, '0')}</a>` : ''}
+          ${x.status !== 'recovered' ? `<a class="link" href="#/console?q=${asked(x)}">Ask the AI</a>` : ''}
+          ${x.kind === 'logerr' ? `<a class="link" href="#/logs?host=${encodeURIComponent(x.asset)}&level=error">Error logs</a>` : ''}
+          ${['disk', 'memory', 'cpu', 'load'].includes(x.kind) ? '<a class="link" href="#/infrastructure">Infrastructure</a>' : ''}</div></div>
+      <div class="frow-side">${x.status === 'firing' ? sevBadge(band(x), x.severity) : x.status === 'recovered' ? '<span class="badge ok">recovered</span>' : '<span class="badge">dismissed</span>'}
+        ${x.status === 'firing' ? `<button class="btn sm ghost" data-action="watch-dismiss" data-key="${esc(x.key)}" title="Hide this until it recovers and happens again">${icon('close', 13)} Dismiss</button>` : ''}
+        ${x.status === 'dismissed' ? `<button class="btn sm ghost" data-action="watch-restore" data-key="${esc(x.key)}">Restore</button>` : ''}</div></div>`;
+    const num = (name, label, value, hint, attrs) => `<div class="field"><label for="w-${name}">${label}</label><input id="w-${name}" type="number" name="${name}" value="${esc(value)}" ${attrs} required>
+      ${hint ? `<div class="hint">${hint}</div>` : ''}</div>`;
+    const tick = (name, label, on, group = '') => `<label class="check"><input type="checkbox" name="${name}" ${group} ${on ? 'checked' : ''}> ${label}</label>`;
+    const option = (v, t, current) => `<option value="${v}" ${String(v) === String(current) ? 'selected' : ''}>${t}</option>`;
+
+    const now = `
+      <div class="stats watch-stats">
+        <div class="card stat ${critical ? 'alert' : firing.length ? 'attn' : ''}"><div class="ico">${icon('alert', 20)}</div><div><b>${firing.length}</b><span>Need attention${critical ? ` · ${critical} critical` : ''}</span></div></div>
+        <div class="card stat"><div class="ico">${icon('check', 20)}</div><div><b>${recovered.length}</b><span>Recovered in 24 hours</span></div></div>
+        <div class="card stat"><div class="ico">${icon('close', 20)}</div><div><b>${dismissed.length}</b><span>Dismissed</span></div></div>
+        <div class="card stat"><div class="ico">${icon('clock', 20)}</div><div><b class="stat-text">${!s.enabled ? 'Off' : untilNext === null ? '—' : untilNext === 0 ? 'Any moment' : `${untilNext} min`}</b><span>${s.enabled ? 'Until the next check' : 'No checks scheduled'}</span></div></div>
+      </div>
+      <div class="section-head" style="margin-top:6px"><h2>Needs attention <span class="muted small">· ${firing.length}</span></h2>
+        ${firing.length > 1 ? `<button class="btn sm ghost" data-action="watch-dismiss" data-key="*">${icon('close', 13)} Dismiss all</button>` : ''}</div>
+      ${firing.length ? `<div class="card frows">${firing.map(row).join('')}</div>`
+        : empty(w.last_run ? 'All clear' : 'No checks yet', w.last_run ? (dismissed.length ? 'Nothing new. Dismissed items are listed below.' : 'Nothing crossed a limit in the latest check.') : 'Run a check to see what it finds.', '', 'check')}
+      ${notes.length ? `<div class="card ai-card watch-note"><div class="ai-head">${icon('spark', 16)}<b>AI analyst on the latest findings</b>
+        <span class="muted small">${lastRun ? ago(firing.find((x) => x.ai_note).first_seen) : ''}</span></div>${notes.map((n) => md(n)).join('<hr>')}</div>` : ''}
+      ${dismissed.length ? `<details class="fold"><summary>${dismissed.length} dismissed <span class="muted small">hidden until they recover and happen again</span></summary><div class="card frows">${dismissed.map(row).join('')}</div></details>` : ''}
+      ${recovered.length ? `<details class="fold" open><summary>${recovered.length} recovered in the last 24 hours</summary><div class="card frows">${recovered.map(row).join('')}</div></details>` : ''}`;
+
+    const history = w.runs.length ? `<div class="card"><div class="table-scroll"><table>
+        <tr><th>Time</th><th>Started by</th><th>Result</th><th>Took</th></tr>
+        ${w.runs.map((r) => `<tr><td class="nowrap">${fmtTime(r.ts)}</td><td>${r.reason === 'manual' ? 'Someone, by hand' : 'Schedule'}</td>
+          <td>${r.ok ? `${r.firing} need attention${r.fresh ? ` · <strong>${r.fresh} new</strong>` : ''}${r.recovered ? ` · ${r.recovered} recovered` : ''}` : `<span style="color:var(--bad)">Failed: ${esc(r.error)}</span>`}</td>
+          <td>${r.seconds} s</td></tr>`).join('')}</table></div></div>` : empty('No checks yet', 'Each check is listed here with what it found.', '', 'clock');
+
+    const settings = `<div class="card card-pad"><form data-form="watch">
+          <div class="watch-grid">
+            <div><h3>Checks</h3>${Object.entries(w.check_names).map(([k, name]) => tick(k, name, s.checks[k], 'data-check')).join('')}
+              <div class="field" style="margin-top:14px"><label for="w-int">Check every</label><select id="w-int" name="interval_minutes">${[1, 2, 5, 10, 15, 30, 60].map((v) => option(v, `${v} minute${v === 1 ? '' : 's'}`, s.interval_minutes)).join('')}</select></div></div>
+            <div><h3>Limits</h3>
+              <div class="grid-2">${num('disk_pct', 'Disk full at (%)', s.disk_pct, '', 'min="50" max="100"')}${num('memory_pct', 'Memory at (%)', s.memory_pct, '', 'min="50" max="100"')}
+                ${num('cpu_pct', 'CPU at (%)', s.cpu_pct, '', 'min="50" max="100"')}${num('load_factor', 'Load above cores ×', s.load_factor, '', 'min="0.1" max="10" step="0.1"')}</div>
+              ${num('log_errors_5m', 'Error lines from one host in 5 minutes', s.log_errors_5m, 'Raise this if a noisy host keeps tripping it.', 'min="1" max="1000000"')}</div>
+            <div><h3>Telling you</h3>${tick('notify_in_app', 'Notification in the app', s.notify_in_app)}${tick('notify_email', 'Email the admins', s.notify_email)}
+              <div class="field" style="margin-top:10px"><label for="w-sev">Email only when at least</label><select id="w-sev" name="email_min_severity">${[[4, 'Medium'], [7, 'High'], [9, 'Critical']].map(([v, t]) => option(v, t, s.email_min_severity)).join('')}</select></div>
+              <div class="field"><label for="w-quiet">Repeat the same problem at most every</label><select id="w-quiet" name="renotify_hours">${[1, 3, 6, 12, 24].map((v) => option(v, `${v} hour${v === 1 ? '' : 's'}`, s.renotify_hours)).join('')}</select></div>
+              ${tick('ai_writeup', 'Have the AI explain each new finding', s.ai_writeup)}${tick('digest_enabled', 'Daily digest by email', s.digest_enabled)}
+              <div class="field" style="margin-top:10px"><label for="w-hour">Digest time</label><select id="w-hour" name="digest_hour">${Array.from({ length: 24 }, (_, h) => option(h, `${String(h).padStart(2, '0')}:00`, s.digest_hour)).join('')}</select></div></div>
+          </div>
+          <div class="row"><button class="btn primary">Save</button><button type="button" class="btn" data-action="watch-digest">Send the digest now</button></div>
+        </form></div>`;
+
+    return `<div class="page">
+      <div class="page-head"><div><h1>AI watch</h1><p>A scheduled analyst: it checks your servers and logs on its own, explains what it finds, and tells you.</p></div>
+        <div class="row">${admin ? `<button class="btn" data-action="watch-run">${icon('retry', 16)} Run a check now</button>
+          <button class="btn ${s.enabled ? '' : 'primary'}" data-action="watch-toggle" data-on="${s.enabled ? '' : '1'}">${s.enabled ? 'Turn off' : 'Turn on'}</button>` : ''}</div></div>
+      <div class="card watch-status ${s.enabled ? 'on' : ''}">
+        <div class="ws-icon">${icon('eye', 26)}</div>
+        <div class="ws-text"><b>${s.enabled ? 'AI watch is on' : 'AI watch is off'}</b>
+          <span>${s.enabled ? `Checks every ${s.interval_minutes} minute${s.interval_minutes === 1 ? '' : 's'}${w.last_run ? ` · last check ${ago(w.last_run)}` : ' · first check in under a minute'}`
+            : (admin ? 'Turn it on to be told about problems without having to ask. You can also run a single check now.' : 'An admin can turn it on.')}
+            ${lastRun && !lastRun.ok ? ` · <span style="color:var(--bad)">last check failed: ${esc(lastRun.error)}</span>` : ''}</span></div>
+        <div class="stat-chips" style="margin:0">${ready(w.metrics_connected, 'Metrics', 'Connect metrics', '#/integrations')}${ready(w.logs_connected, 'Logs', 'Connect logs', '#/integrations')}
+          ${ready(w.ai_ready, 'AI write-ups', 'No AI model', '#/providers')}${ready(w.email_ready, 'Email alerts', 'Email not ready', '#/integrations')}</div></div>
+      <div class="tabs watch-tabs"><a href="#/watch" class="${tab === 'now' ? 'on' : ''}">Now${firing.length ? ` <span class="badge ${critical ? 'critical' : 'high'}">${firing.length}</span>` : ''}</a>
+        <a href="#/watch?tab=history" class="${tab === 'history' ? 'on' : ''}">Check history</a>
+        ${admin ? `<a href="#/watch?tab=settings" class="${tab === 'settings' ? 'on' : ''}">Settings</a>` : ''}</div>
+      ${tab === 'history' ? history : tab === 'settings' ? settings : now}
+    </div>`;
+  };
+
+  // ---------- logs (Loki through Grafana) ----------
+
+  const LOG_SERIES = [['error', 'Error', 'lvl-error'], ['warn', 'Warning', 'lvl-warn'], ['info', 'Info', 'lvl-info'], ['debug', 'Debug', 'lvl-debug'], ['other', 'No level', 'lvl-other']];
+  const LEVEL_MATCH = { error: 'error|err|critical|crit|fatal|emerg|alert|panic', warn: 'warn|warning', info: 'info|notice|informational', debug: 'debug|trace' };
+  const LOG_RANGES = [['15', '15 minutes'], ['60', '1 hour'], ['360', '6 hours'], ['1440', '24 hours']];
+  const logqlText = (v) => String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  // Lines without a level label are classified from their text so problems still stand out.
+  const lineLevel = (l) => (l.level !== 'other' ? l.level
+    : /\b(error|fatal|panic|critical|failed|failure|denied|refused|segfault)\b/i.test(l.line) ? 'error' : /\bwarn(ing)?\b/i.test(l.line) ? 'warn' : 'other');
+  const notConnected = (what, need) => empty(`${what} are not connected`, isAdmin() ? `Add your Grafana address, a service account token and the ${need} datasource under Integrations.`
+    : `Ask an admin to connect Grafana with a ${need} datasource.`, isAdmin() ? '<div style="margin-top:14px"><a class="btn" href="#/integrations">Open Integrations</a></div>' : '', 'plug');
+
+  // Saved searches are kept in this browser only.
+  const savedSearches = {
+    all() { try { return JSON.parse(localStorage.getItem('cerberus-log-saves') || '[]'); } catch { return []; } },
+    set(list) { try { localStorage.setItem('cerberus-log-saves', JSON.stringify(list.slice(0, 12))); } catch { /* storage blocked */ } },
+  };
+
+  views.logs = async ({ overview, params }) => {
+    const o = await overview;
+    if (!o.loki_configured) return page('Logs', 'Search and chart the logs collected in Loki.', '', notConnected('Logs', 'Loki'));
+    const enc = encodeURIComponent;
+    const f = { job: params.get('job') || '', host: params.get('host') || '', program: params.get('program') || '', level: params.get('level') || '',
+      text: params.get('text') || '', minutes: params.get('minutes') || '15', start: params.get('start') || '', end: params.get('end') || '',
+      tab: params.get('tab') === 'patterns' ? 'patterns' : 'explore', live: params.get('live') === '1' };
+    const matchers = [f.job && `job="${logqlText(f.job)}"`, f.host && `host="${logqlText(f.host)}"`, f.program && `program="${logqlText(f.program)}"`].filter(Boolean);
+    const levelFilter = LEVEL_MATCH[f.level] ? ` | detected_level=~"${LEVEL_MATCH[f.level]}"` : '';
+    // Text starting with "{" is taken as a full LogQL query; anything else means "lines containing".
+    const raw = f.text.trim().startsWith('{');
+    const query = raw ? f.text.trim() : `{${matchers.length ? matchers.join(', ') : 'job=~".+"'}}${levelFilter}${f.text ? ` |= "${logqlText(f.text)}"` : ''}`;
+    const zoomed = Boolean(f.start && f.end);
+    const [labels, data] = await Promise.all([
+      state.logLabels ? state.logLabels : api('/logs/labels').then((l) => { state.logLabels = l; return l; }).catch(() => ({ job: [], host: [], program: [] })),
+      api(`/logs?query=${enc(query)}&minutes=${enc(f.minutes)}&limit=200${zoomed ? `&start=${enc(f.start)}&end=${enc(f.end)}` : ''}`)
+        .catch((err) => ({ error: err.message, lines: [], volume: [], patterns: [], total: 0 }))]);
+    const link = (change = {}) => {
+      const next = { job: f.job, host: f.host, program: f.program, level: f.level, text: f.text, minutes: f.minutes === '15' ? '' : f.minutes,
+        start: f.start, end: f.end, tab: f.tab === 'patterns' ? 'patterns' : '', live: f.live ? '1' : '', ...change };
+      const p = new URLSearchParams();
+      Object.entries(next).forEach(([k, v]) => { if (v) p.set(k, v); });
+      return `#/logs${p.toString() ? `?${p}` : ''}`;
+    };
+    state.logs = { data, query, f, link };
+    const buckets = data.volume.map((v) => ({ ...v, t: Date.parse(v.ts) }));
+    const totals = Object.fromEntries(LOG_SERIES.map(([k]) => [k, buckets.reduce((n, b) => n + (b[k] || 0), 0)]));
+    const rangeName = zoomed ? `${clock(Date.parse(f.start))} – ${clock(Date.parse(f.end))}` : `Last ${(LOG_RANGES.find(([v]) => v === f.minutes) || LOG_RANGES[0])[1]}`;
+    const facetsOpen = pref.get('logfacets', 'open') === 'open';
+    const chartOpen = pref.get('logchart', 'open') === 'open';
+
+    const chips = [['job', 'Job'], ['host', 'Host'], ['program', 'Program'], ['level', 'Level']].filter(([k]) => f[k])
+      .map(([k, name]) => `<a class="fchip" href="${link({ [k]: '' })}" title="Remove this filter">${name}: <b>${esc(f[k])}</b>${icon('close', 12)}</a>`);
+    if (zoomed) chips.push(`<a class="fchip" href="${link({ start: '', end: '' })}" title="Back to the full range">Time: <b>${rangeName}</b>${icon('close', 12)}</a>`);
+    const saved = savedSearches.all().map((x) => `<span class="fchip saved"><a href="#/logs?${esc(x.q)}">${icon('star', 12)} ${esc(x.name)}</a>
+      <button type="button" data-action="log-unsave" data-name="${esc(x.name)}" title="Remove this saved search" aria-label="Remove">${icon('close', 12)}</button></span>`);
+
+    // Facets: what the newest lines are made of, each row a one-click filter.
+    const tally = (pick) => { const m = new Map(); data.lines.forEach((l) => { const v = pick(l); if (v) m.set(v, (m.get(v) || 0) + 1); }); return [...m].sort((a, b) => b[1] - a[1]).slice(0, 8); };
+    const facet = (title, name, rows) => (rows.length ? `<div class="facet"><h4>${title}</h4>${rows.map(([v, n]) => `<button type="button" class="facet-row ${f[name] === v ? 'on' : ''}" data-action="log-filter" data-name="${name}" data-value="${esc(v)}">
+      <span class="fr-name">${esc(name === 'level' ? LOG_SERIES.find(([k]) => k === v)[1] : v)}</span><span class="fr-bar"><i style="width:${Math.max(4, (n / rows[0][1]) * 100)}%"></i></span><span class="fr-n">${n}</span></button>`).join('')}</div>` : '');
+    const facets = `<aside class="facets card"><div class="facets-note">From the newest ${data.lines.length} lines</div>
+      ${facet('Level', 'level', tally((l) => (LEVEL_MATCH[lineLevel(l)] ? lineLevel(l) : '')))}${facet('Host', 'host', tally((l) => l.labels.host))}${facet('Program', 'program', tally((l) => l.labels.program))}
+      ${labels.job.length > 1 ? facet('Job', 'job', tally((l) => l.labels.job)) : ''}</aside>`;
+
+    const rows = data.lines.map((l, i) => `<div class="logrow lvl-${lineLevel(l)}" data-action="log-open" data-i="${i}" tabindex="0" title="Open this line">
+      <span class="lr-time">${esc(new Date(l.ts).toLocaleTimeString([], { hour12: false }))}</span>
+      <span class="lr-src">${l.labels.host ? `<span class="lr-chip">${esc(l.labels.host)}</span>` : ''}${l.labels.program ? `<span class="lr-chip">${esc(l.labels.program)}</span>` : ''}</span>
+      <span class="lr-text">${esc(l.line)}</span></div>`).join('');
+    const nothing = `<div class="empty">${icon('search', 34)}<h3>No log lines found</h3><div>Try a longer time range or fewer filters.</div>
+      <div style="margin-top:14px"><button class="btn" data-action="reload">${icon('retry', 16)} Refresh</button></div></div>`;
+    const patterns = data.patterns.length ? `<div class="patterns">${data.patterns.map((p) => `<details class="pattern"><summary>
+      <span class="pt-n">${p.count}</span><span class="fr-bar"><i style="width:${Math.max(4, (p.count / data.patterns[0].count) * 100)}%"></i></span>
+      <span class="pt-text">${esc(p.pattern)}</span><span class="lr-src">${p.host ? `<span class="lr-chip">${esc(p.host)}</span>` : ''}${p.program ? `<span class="lr-chip">${esc(p.program)}</span>` : ''}</span></summary>
+      <div class="pt-example"><span class="muted small">Example</span><pre>${esc(p.example)}</pre></div></details>`).join('')}</div>` : nothing;
+
+    const html = `<div class="page wide">
+      <div class="page-head"><div><h1>Logs</h1><p>Your Loki logs, read through Grafana.</p></div>
+        <div class="tabs"><a href="${link({ tab: '' })}" class="${f.tab === 'explore' ? 'on' : ''}">Explore</a>
+          <a href="${link({ tab: 'patterns' })}" class="${f.tab === 'patterns' ? 'on' : ''}">Patterns <span class="badge">${data.patterns.length}</span></a></div></div>
+      <div class="toolbar">
+        <button class="btn icon ${facetsOpen ? 'on' : ''}" data-action="log-facets" title="Show or hide the filter panel" aria-label="Filter panel">${icon('panel')}</button>
+        <form class="tb-search" data-form="logs-filter">${icon('search', 17)}
+          <input type="text" name="text" value="${esc(f.text)}" placeholder="Search lines, or write a LogQL query starting with {" autocomplete="off" spellcheck="false" aria-label="Search logs">
+          <div class="pop-wrap"><button type="button" class="tb-help" data-action="menu" title="Search help" aria-label="Search help">?</button>
+            <div class="pop menu help" hidden><b>Searching logs</b>
+              <p>Type any text to find lines that contain it, for example <code>Failed password</code>.</p>
+              <p>For full control write LogQL, starting with a brace:</p>
+              <pre>{host="web01"} |= "error" != "timeout"</pre>
+              <p>Use the panel on the left, or click a host or program in a line, to filter without typing.</p>
+              <p class="muted small" style="margin:0">Query in use: <span class="mono">${esc(query)}</span></p></div></div></form>
+        <a class="btn ${f.live ? 'on live-on' : ''}" href="${link({ live: f.live ? '' : '1', start: '', end: '' })}" title="Reload the newest lines every 5 seconds">${icon(f.live ? 'stop' : 'play', 16)} Live</a>
+        <div class="pop-wrap"><button class="btn" data-action="menu">${icon('clock', 16)} ${rangeName}</button>
+          <div class="pop menu" hidden>${LOG_RANGES.map(([v, t]) => `<a class="menu-item ${!zoomed && v === f.minutes ? 'on' : ''}" href="${link({ minutes: v === '15' ? '' : v, start: '', end: '' })}">Last ${t}</a>`).join('')}</div></div>
+        <button class="btn" data-action="log-ai" title="Have the AI analyst summarise what these logs show">${icon('spark', 16)} Summarise</button>
+        <div class="pop-wrap"><button class="btn icon" data-action="menu" title="More" aria-label="More">${DOTS}</button>
+          <div class="pop menu" hidden><button class="menu-item" data-action="log-export">${icon('download', 16)}<span>Export these lines</span></button>
+            <button class="menu-item" data-action="log-copy-query">${icon('copy', 16)}<span>Copy the query</span></button>
+            <button class="menu-item" data-action="log-save">${icon('star', 16)}<span>Save this search</span></button></div></div>
+      </div>
+      ${chips.length || saved.length ? `<div class="fchips">${chips.join('')}${saved.length ? `<span class="muted small">Saved</span>${saved.join('')}` : ''}</div>` : ''}
+      ${data.error ? `<div class="callout">${esc(data.error)}</div>` : ''}${data.warning ? `<div class="callout info">${esc(data.warning)}</div>` : ''}
+      <div class="card chart-card ${chartOpen ? '' : 'closed'}"><div class="cc-head"><b>Log volume</b><span class="muted small">${fmtNum(data.total)} lines · ${rangeName}</span>
+        <span class="spacer"></span>${legend('lvl', LOG_SERIES, totals)}
+        <button class="btn icon sm" data-action="chart-collapse" title="Show or hide the chart" aria-label="Show or hide the chart">${icon('chevron', 16)}</button></div>
+        <div class="cc-body"><div class="chart" id="logs-volume"></div></div></div>
+      <div id="ai-insight"></div>
+      <div class="logs-body ${facetsOpen ? '' : 'no-facets'}">${facets}
+        <div class="card logs-list"><div class="ll-head"><b>${f.tab === 'patterns' ? `${data.patterns.length} patterns` : `Newest ${data.lines.length} lines`}</b>
+          ${f.live ? '<span class="live"><span class="dot on"></span>Live</span>' : ''}<span class="spacer"></span>
+          <span class="muted small">${f.tab === 'patterns' ? 'Similar lines grouped together, with the changing parts replaced' : 'Click a line for details, surrounding lines and an AI explanation'}</span></div>
+          ${f.tab === 'patterns' ? patterns : (rows ? `<div class="logrows">${rows}</div>` : nothing)}</div></div>
+    </div>`;
+    const stepMs = (data.step || 60) * 1000;
+    return { html, mount() {
+      stackChart('logs-volume', buckets, { series: LOG_SERIES, group: 'lvl', span: stepMs, unit: ['line', 'lines'], empty: 'No log lines in this period.',
+        axis: (b, i, n) => (i % Math.ceil(n / 6) === 0 ? clock(b.t) : ''), pickHint: 'Click to zoom into this moment',
+        onPick: (b) => { location.hash = link({ start: new Date(b.t).toISOString(), end: new Date(b.t + stepMs).toISOString(), live: '' }); } });
+      if (f.live) {
+        state.logTimer = setInterval(() => {
+          const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+          if (current === 'logs' && !document.hidden && !typing && !$('#log-drawer') && !$('dialog[open]') && !$('.pop:not([hidden])') && !String(getSelection())) route({ soft: true });
+        }, 5000);
+      }
+    } };
+  };
+
+  function closeDrawer() { const d = $('#log-drawer'); if (d) d.remove(); }
+  function openLogDrawer(index) {
+    closeDrawer();
+    const l = state.logs && state.logs.data.lines[index];
+    if (!l) return;
+    state.logLine = l;
+    const level = lineLevel(l);
+    const d = document.createElement('aside');
+    d.id = 'log-drawer';
+    d.className = 'drawer-panel';
+    d.innerHTML = `<div class="dp-head"><div><b>Log line</b><small>${esc(new Date(l.ts).toLocaleString())}${LEVEL_MATCH[level] ? ` · ${LOG_SERIES.find(([k]) => k === level)[1]}` : ''}</small></div>
+        <button class="btn ghost icon" data-action="drawer-close" title="Close (Esc)" aria-label="Close">${icon('close')}</button></div>
+      <div class="dp-body"><pre class="dp-line lvl-${level}">${esc(l.line)}</pre>
+        <div class="row"><button class="btn sm primary" data-action="log-explain">${icon('spark', 14)} Explain with AI</button>
+          <button class="btn sm" data-action="log-context">Show surrounding lines</button><button class="btn sm" data-action="log-copy-line">${icon('copy', 14)} Copy</button></div>
+        <div id="dp-ai"></div><div id="dp-context"></div>
+        <h4>Labels</h4><dl class="kv dp-labels">${Object.entries(l.labels).map(([k, v]) => `<dt>${esc(k)}</dt><dd><span>${esc(v)}</span>
+          ${['host', 'program', 'job'].includes(k) ? `<button class="linklike" data-action="log-filter" data-name="${k}" data-value="${esc(v)}">filter</button>` : ''}</dd>`).join('')}</dl></div>`;
+    document.body.appendChild(d);
+  }
+
+  // ---------- infrastructure (Prometheus through Grafana) ----------
+
+  const meter = (label, value) => {
+    if (value === undefined || value === null) return '';
+    const state = value >= 90 ? 'crit' : value >= 75 ? 'warn' : 'ok';
+    return `<div class="meter ${state}" title="${label}: ${value.toFixed(1)}%"><div class="meter-top"><span>${label}</span><b>${Math.round(value)}%${state === 'crit' ? ' · high' : state === 'warn' ? ' · elevated' : ''}</b></div>
+      <div class="meter-track"><span style="width:${Math.min(100, Math.max(1, value))}%"></span></div></div>`;
+  };
+
+  views.infrastructure = async ({ overview }) => {
+    const o = await overview;
+    if (!o.metrics_configured) return page('Infrastructure', 'Live health of your servers and services.', '', notConnected('Metrics', 'Prometheus'));
+    const h = await api('/infrastructure');
+    const bare = (instance) => String(instance).replace(/:\d+$/, '');
+    const targetUp = Object.fromEntries(h.scrape_targets.map((t) => [t.instance, t.up]));
+    const down = h.scrape_targets.filter((t) => !t.up).length + h.http_probes.filter((p) => !p.up).length;
+    const slowest = Math.max(0.001, ...h.http_probes.map((p) => p.response_seconds || 0));
+    const badge = (up) => (up ? '<span class="badge ok">up</span>' : '<span class="badge critical">down</span>');
+    return page('Infrastructure', 'Live health from Prometheus, read through Grafana. Refreshes every 30 seconds.',
+      `<button class="btn" data-action="ai-brief" data-kind="infrastructure">${icon('spark', 16)} AI health brief</button>`,
+      `<div id="ai-insight"></div><div class="stat-chips" style="margin-top:0"><span class="${down ? 'warn' : ''}"><b>${down ? `${down} down` : 'All up'}</b></span>
+        <span><b>${h.hosts.length}</b> hosts</span><span><b>${h.scrape_targets.length}</b> scrape targets</span><span><b>${h.http_probes.length}</b> web checks</span></div>
+      ${h.hosts.length ? `<div class="host-grid">${h.hosts.map((x) => `<div class="card host">
+        <div class="host-head"><div><b>${esc(bare(x.instance))}</b><small class="mono">${esc(x.instance)}</small></div>${badge(targetUp[x.instance] !== false)}</div>
+        ${meter('CPU', x.cpu_pct)}${meter('Memory', x.mem_pct)}${meter('Disk', x.disk_pct)}
+        <div class="host-foot"><span title="1-minute load compared with the number of CPU cores">Load <b>${x.load1 ?? '—'}</b>${x.cpu_cores ? ` / ${x.cpu_cores} cores` : ''}</span><span>Up <b>${x.uptime_days === undefined ? '—' : `${x.uptime_days} d`}</b></span>
+          <a class="link" href="#/logs?host=${encodeURIComponent(bare(x.instance))}">Logs</a></div></div>`).join('')}</div>` : ''}
+      ${h.http_probes.length ? `<div class="card card-pad"><h2>Web checks</h2><div class="probes">${h.http_probes.map((p) => `<div class="probe">
+        <div class="probe-name"><b>${esc(p.job || p.target)}</b><small class="mono">${esc(p.target)}</small></div>
+        <div class="probe-bar" title="Response time ${p.response_seconds ?? '—'} s"><span class="${p.up ? '' : 'bad'}" style="width:${Math.max(2, ((p.response_seconds || 0) / slowest) * 100)}%"></span></div>
+        <div class="probe-ms">${p.response_seconds === undefined ? '—' : `${Math.round(p.response_seconds * 1000)} ms`}</div>${badge(p.up)}</div>`).join('')}</div></div>` : ''}
+      <div class="card"><div class="card-pad" style="padding-bottom:8px"><h2>Scrape targets</h2></div><div class="table-scroll"><table>
+        <tr><th data-sort="text">Job</th><th data-sort="text">Instance</th><th data-sort="num">Status</th></tr>
+        ${h.scrape_targets.map((t) => `<tr><td>${esc(t.job)}</td><td class="mono">${esc(t.instance)}</td><td data-v="${t.up ? 1 : 0}">${badge(t.up)}</td></tr>`).join('')}</table></div></div>
+      ${h.query_errors.length ? `<div class="callout info">Some measurements were unavailable: ${esc(h.query_errors.join('; '))}</div>` : ''}`);
   };
 
   views.assets = async () => {
     const assets = await api('/assets');
     return page('Assets', 'Hosts and services seen in events. New names are added automatically on first sight.', '',
       assets.length ? `<div class="card"><div class="table-scroll"><table>
-        <tr><th>Name</th><th>IP</th><th>Kind</th><th>Criticality</th><th>Open incidents</th><th>Events</th><th>Last event</th></tr>
+        <tr><th data-sort="text">Name</th><th data-sort="text">IP</th><th data-sort="text">Kind</th><th data-sort="text">Criticality</th><th data-sort="num">Open incidents</th><th data-sort="num">Events</th><th>Last event</th></tr>
         ${assets.map((a) => `<tr class="clickable" data-href="#/events?q=${encodeURIComponent(a.name)}"><td><strong>${esc(a.name)}</strong>${demoBadge(a.demo)}</td>
           <td class="mono">${esc(a.ip || '—')}</td><td>${esc(a.kind)}</td><td>${esc(a.criticality)}</td>
           <td>${a.open_incidents ? `<span class="badge high">${a.open_incidents}</span>` : '<span class="muted">0</span>'}</td><td>${a.event_count}</td><td class="nowrap">${agoCell(a.last_event)}</td></tr>`).join('')}
@@ -935,11 +1336,12 @@
   }
 
   views.integrations = async () => {
-    const [data, mail] = await Promise.all([api('/integrations'), api('/integrations/email')]);
+    const [data, mail, wz] = await Promise.all([api('/integrations'), api('/integrations/email'), api('/integrations/wazuh')]);
+    const z = wz.settings;
     const g = data.grafana;
     const m = mail.settings;
     const hook = `${location.origin}/api/v1/webhooks/grafana`;
-    const planned = ['Wazuh', 'Snort 3', 'Zeek', 'open-appsec', 'Velociraptor', 'VirusTotal / MISP', 'Slack', 'Jira', 'Gmail'];
+    const planned = ['Snort 3', 'Zeek', 'open-appsec', 'Velociraptor', 'VirusTotal / MISP', 'Slack', 'Jira', 'Gmail'];
     return page('Integrations', 'Push alerts in, and give the analyst bounded read access to your telemetry.', '',
       `<div class="card card-pad"><h2>Grafana → CERBERUS · alert webhook</h2>
         <p class="muted" style="margin:6px 0 14px">Grafana Alerting posts firing and resolved alerts here. Each becomes an event and is correlated into incidents.</p>
@@ -966,6 +1368,26 @@
           </div>
           <div class="field"><label class="check"><input type="checkbox" name="verify_tls" ${g.verify_tls === false ? '' : 'checked'}> Verify TLS certificate (turn off only for a self-signed internal Grafana)</label></div>
           <div class="row"><button class="btn primary">Save and test</button><span id="g-result" class="muted"></span></div>
+        </form></div>
+      <div class="card card-pad"><h2>Wazuh ${z.enabled && z.url ? `<span class="badge ${wz.last_ok ? 'ok' : 'critical'}">${wz.last_ok ? 'connected' : 'failing'}</span>` : ''}</h2>
+        <p class="muted" style="margin:6px 0 14px">CERBERUS signs in to Wazuh and pulls its detections every few minutes. Nothing is installed on the Wazuh server.
+          Alerts are grouped: one event per machine, rule and source IP per hour, with a running count.</p>
+        <form data-form="wazuh">
+          <div class="grid-2">
+            <div class="field"><label for="z-url">Wazuh address</label><input id="z-url" type="url" name="url" value="${esc(z.url || '')}" placeholder="https://wazuh-host:8443">
+              <div class="hint">The Wazuh dashboard address works, and so does the indexer (port 9200).</div></div>
+            <div class="grid-2"><div class="field"><label for="z-user">Username</label><input id="z-user" type="text" name="username" value="${esc(z.username || '')}" autocomplete="off"></div>
+              <div class="field"><label for="z-pass">Password</label><input id="z-pass" type="password" name="password" autocomplete="new-password" placeholder="${z.has_password ? 'Leave blank to keep it' : ''}"></div></div>
+            <div class="grid-2"><div class="field"><label for="z-level">Bring in level</label><select id="z-level" name="min_level">${[[5, '5 and above (a lot)'], [7, '7 and above'], [10, '10 and above'], [12, '12 and above']]
+                .map(([v, t]) => `<option value="${v}" ${Number(z.min_level) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+              <div class="field"><label for="z-poll">Check every</label><select id="z-poll" name="poll_minutes">${[1, 2, 5, 10].map((v) => `<option value="${v}" ${Number(z.poll_minutes) === v ? 'selected' : ''}>${v} minute${v === 1 ? '' : 's'}</option>`).join('')}</select></div></div>
+            <div class="field"><label for="z-skip">Rule IDs to ignore</label><input id="z-skip" type="text" name="exclude_rules" value="${esc(z.exclude_rules || '')}" placeholder="e.g. 31533, 203">
+              <div class="hint">Comma separated. Useful for a noisy rule you already know about.</div></div>
+          </div>
+          <div class="field row" style="gap:22px"><label class="check"><input type="checkbox" name="enabled" ${z.enabled ? 'checked' : ''}> Pull detections automatically</label>
+            <label class="check"><input type="checkbox" name="verify_tls" ${z.verify_tls === false ? '' : 'checked'}> Verify the TLS certificate (turn off for a self-signed Wazuh)</label></div>
+          <div class="row"><button class="btn primary">Save and test</button><button type="button" class="btn" data-action="wazuh-sync" ${z.url ? '' : 'disabled'}>Pull now</button>
+            <span class="muted small" id="z-result">${wz.last_sync ? `Last pull ${ago(wz.last_sync)}: ${esc(wz.last_result)} · ${wz.events.toLocaleString()} Wazuh events stored` : 'Not pulled yet'}</span></div>
         </form></div>
       <div class="card card-pad"><h2>Email ${mail.configured ? '<span class="badge ok">configured</span>' : ''}</h2>
         <p class="muted" style="margin:6px 0 14px">Used for account verification, password resets, reports to admins and team announcements.</p>
@@ -1164,6 +1586,14 @@ Authorization: Bearer &lt;token&gt;
       pref.set('sidebar', shell.classList.toggle('rail') ? 'rail' : 'open');
     },
     palette() { const pop = $('#palette-pop'); pop.hidden = !pop.hidden; },
+    shortcuts() { shortcutsDialog(); },
+    'nav-group'(el) {
+      const group = el.closest('.nav-group');
+      const closed = group.classList.toggle('closed');
+      el.setAttribute('aria-expanded', String(!closed));
+      const name = group.dataset.group;
+      pref.set('navclosed', [...closedGroups().filter((g) => g !== name), ...(closed ? [name] : [])].join(','));
+    },
     accent(el) { pref.set('accent', el.dataset.value); theme.apply(); },
     async 'demo-load'() { const r = await api('/demo', { method: 'POST' }); toast(`Loaded ${r.created} demo events`); route(); },
     async 'demo-clear'() {
@@ -1227,6 +1657,102 @@ Authorization: Bearer &lt;token&gt;
       el.disabled = true; el.innerHTML = '<span class="spinner"></span> Sending';
       try { const r = await api('/integrations/email/test', { method: 'POST' }); toast(`Test email sent to ${r.to}`); }
       finally { el.disabled = false; el.textContent = 'Send test email'; route({ soft: true }); }
+    },
+    legend(el) {
+      const set = state.hidden[el.dataset.group] || (state.hidden[el.dataset.group] = new Set());
+      if (set.has(el.dataset.key)) set.delete(el.dataset.key); else set.add(el.dataset.key);
+      document.querySelectorAll(`.lg[data-group="${el.dataset.group}"]`).forEach((b) => b.classList.toggle('off', set.has(b.dataset.key)));
+      charts.forEach((draw) => draw());
+    },
+    'log-filter'(el) {
+      const { f, link } = state.logs;
+      closeDrawer();
+      location.hash = link({ [el.dataset.name]: f[el.dataset.name] === el.dataset.value ? '' : el.dataset.value, text: f.text.trim().startsWith('{') ? '' : f.text });
+    },
+    'log-open'(el) { if (!String(getSelection())) openLogDrawer(Number(el.dataset.i)); },
+    'drawer-close'() { closeDrawer(); },
+    'log-facets'(el) { const open = $('.logs-body').classList.toggle('no-facets'); pref.set('logfacets', open ? 'closed' : 'open'); el.classList.toggle('on', !open); },
+    'chart-collapse'(el) { const closed = el.closest('.chart-card').classList.toggle('closed'); pref.set('logchart', closed ? 'closed' : 'open'); if (!closed) charts.forEach((draw) => draw()); },
+    'log-copy-line'() { copyText(state.logLine.line); },
+    'log-copy-query'() { copyText(state.logs.query); },
+    'log-export'() {
+      const { data, query } = state.logs;
+      if (!data.lines.length) return toast('There are no lines to export');
+      const text = [`# CERBERUS log export · ${new Date().toISOString()} · ${query}`, ...data.lines.map((l) => `${l.ts}\t${l.labels.host || ''}\t${l.labels.program || ''}\t${l.line}`)].join('\n');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+      a.download = `cerberus-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.log`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      toast(`Exported ${data.lines.length} lines`);
+    },
+    async 'log-save'() {
+      const answer = await confirmDialog({ title: 'Save this search', text: 'Give it a short name. Saved searches are kept in this browser.', ok: 'Save', input: state.logs.f.text || state.logs.f.host || state.logs.f.program || 'My search' });
+      if (!answer || !answer.value) return;
+      const q = (state.logs.link({ start: '', end: '', live: '' }).split('?')[1] || '');
+      savedSearches.set([{ name: answer.value.slice(0, 40), q }, ...savedSearches.all().filter((x) => x.name !== answer.value)]);
+      toast('Search saved'); route({ soft: true });
+    },
+    'log-unsave'(el) { savedSearches.set(savedSearches.all().filter((x) => x.name !== el.dataset.name)); route({ soft: true }); },
+    'log-ai'() {
+      const { query, f } = state.logs;
+      $('#ai-insight').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      return aiBrief($('#ai-insight'), { kind: 'logs', query, minutes: Number(f.minutes) || 15, start: f.start, end: f.end }, BRIEF_TITLES.logs);
+    },
+    'log-explain'() { return aiBrief($('#dp-ai'), { kind: 'log_line', line: state.logLine.line, labels: state.logLine.labels }, 'What this line means'); },
+    async 'log-context'(el) {
+      const box = $('#dp-context');
+      el.disabled = true;
+      box.innerHTML = '<div class="working" style="margin:12px 0"><span class="spinner"></span><span>Loading surrounding lines…</span></div>';
+      try {
+        const keep = Object.fromEntries(Object.entries(state.logLine.labels).filter(([k]) => ['host', 'program', 'job', 'service_name', 'filename', 'unit'].includes(k)));
+        const r = await api('/logs/context', { method: 'POST', body: { labels: keep, ns: state.logLine.ns } });
+        box.innerHTML = `<h4>Surrounding lines <span class="muted small">same stream, oldest first</span></h4><div class="dp-context">${r.lines.map((x) => `<div class="${x.current ? 'cur' : ''}">
+          <span>${esc(new Date(x.ts).toLocaleTimeString([], { hour12: false }))}</span>${esc(x.line)}</div>`).join('')}</div>`;
+        const cur = $('.dp-context .cur', box);
+        if (cur) cur.scrollIntoView({ block: 'center' });
+      } catch (err) { box.innerHTML = `<div class="callout" style="margin:12px 0">${esc(err.message)}</div>`; } finally { el.disabled = false; }
+    },
+    async 'wazuh-sync'(el) {
+      el.disabled = true; el.innerHTML = '<span class="spinner"></span> Pulling…';
+      try {
+        const r = await api('/integrations/wazuh/sync', { method: 'POST' });
+        toast(r.ok ? `Pulled ${r.groups} grouped detections: ${r.new} new, ${r.updated} updated` : r.error, !r.ok);
+      } finally { route({ soft: true }); }
+    },
+    async 'watch-toggle'(el) {
+      const on = Boolean(el.dataset.on);
+      await api('/watch', { method: 'PUT', body: { enabled: on, tz_offset: -new Date().getTimezoneOffset() } });
+      toast(on ? 'AI watch is on. The first check runs within a minute.' : 'AI watch is off'); route({ soft: true });
+    },
+    async 'watch-run'(el) {
+      el.disabled = true; el.innerHTML = '<span class="spinner"></span> Checking…';
+      try {
+        const r = await api('/watch/run', { method: 'POST', body: { tz_offset: -new Date().getTimezoneOffset() } });
+        toast(r.ok ? `${r.firing} need attention${r.new ? `, ${r.new} new` : ''}${r.recovered ? `, ${r.recovered} recovered` : ''}` : (r.error || 'The check failed'), !r.ok);
+      } finally { route({ soft: true }); }
+    },
+    async 'watch-dismiss'(el) {
+      const all = el.dataset.key === '*';
+      if (all && !await confirmDialog({ title: 'Dismiss everything listed?', text: 'Each item stays hidden until it recovers and then happens again. Its incident is left as it is.', ok: 'Dismiss all' })) return;
+      await api('/watch/findings', { method: 'POST', body: { key: el.dataset.key, dismissed: true } });
+      toast(all ? 'All dismissed' : 'Dismissed. It will come back only if it recovers and then happens again.'); route({ soft: true });
+    },
+    async 'watch-restore'(el) { await api('/watch/findings', { method: 'POST', body: { key: el.dataset.key, dismissed: false } }); route({ soft: true }); },
+    async 'watch-digest'(el) {
+      el.disabled = true;
+      try { await api('/watch/digest', { method: 'POST' }); toast('Digest sent to the admins'); } finally { el.disabled = false; }
+    },
+    'ai-brief'(el) { return aiBrief($('#ai-insight'), { kind: el.dataset.kind }, BRIEF_TITLES[el.dataset.kind]); },
+    'ai-dismiss'(el) { const box = el.closest('#ai-insight, #dp-ai'); box.innerHTML = ''; if (box.id === 'ai-insight') state.insight = null; },
+    'ai-copy'(el) { copyText(el.closest('#ai-insight, #dp-ai').dataset.text || ''); },
+    'pw-toggle'(el) {
+      const input = $('input', el.parentElement);
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      el.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+      el.classList.toggle('on', show);
+      input.focus();
     },
     'user-add'() { openUserDialog(); },
     'dialog-close'(el) { el.closest('dialog').close(); },
@@ -1342,11 +1868,35 @@ Authorization: Bearer &lt;token&gt;
     quick() { openPalette(); },
     ask(f) { const q = f.q.value.trim(); if (q) location.hash = `#/console?q=${encodeURIComponent(q)}`; },
     chat(f) { if (state.busy) return; const q = f.q.value; f.q.value = ''; f.q.style.height = 'auto'; sendChat(q); },
+    async wazuh(f) {
+      const body = { enabled: f.enabled.checked, url: f.url.value.trim(), username: f.username.value.trim(), password: f.password.value, verify_tls: f.verify_tls.checked,
+        min_level: Number(f.min_level.value), exclude_rules: f.exclude_rules.value.trim(), poll_minutes: Number(f.poll_minutes.value) };
+      await api('/integrations/wazuh', { method: 'PUT', body });
+      if (!body.url) { toast('Wazuh settings cleared'); return route({ soft: true }); }
+      $('#z-result').innerHTML = '<span class="spinner"></span> Testing…';
+      const r = await api('/integrations/wazuh/test', { method: 'POST' }).catch((err) => { $('#z-result').textContent = ''; throw err; });
+      toast(`Connected to Wazuh (${r.mode}). ${r.alerts_24h.toLocaleString()} alerts at this level in the last 24 hours from ${r.agents.length} agents.`);
+      route({ soft: true });
+    },
+    async watch(f) {
+      const checks = Object.fromEntries([...f.querySelectorAll('[data-check]')].map((c) => [c.name, c.checked]));
+      const body = { checks, tz_offset: -new Date().getTimezoneOffset(), interval_minutes: Number(f.interval_minutes.value), disk_pct: Number(f.disk_pct.value),
+        memory_pct: Number(f.memory_pct.value), cpu_pct: Number(f.cpu_pct.value), load_factor: Number(f.load_factor.value), log_errors_5m: Number(f.log_errors_5m.value),
+        notify_in_app: f.notify_in_app.checked, notify_email: f.notify_email.checked, email_min_severity: Number(f.email_min_severity.value),
+        renotify_hours: Number(f.renotify_hours.value), ai_writeup: f.ai_writeup.checked, digest_enabled: f.digest_enabled.checked, digest_hour: Number(f.digest_hour.value) };
+      await api('/watch', { method: 'PUT', body });
+      toast('Saved'); route({ soft: true });
+    },
+    'logs-filter'(f) {
+      const next = state.logs.link({ text: f.text.value.trim() });
+      if (location.hash === next) route(); else location.hash = next;
+    },
     'events-filter'(f) {
       const p = new URLSearchParams();
       if (f.q.value.trim()) p.set('q', f.q.value.trim());
       if (f.source.value) p.set('source', f.source.value);
       if (f.min.value !== '1') p.set('min', f.min.value);
+      if (f.range.value === '7d') p.set('range', '7d');
       const next = `#/events${p.toString() ? `?${p}` : ''}`;
       if (location.hash === next) route(); else location.hash = next;
     },
@@ -1440,6 +1990,14 @@ Authorization: Bearer &lt;token&gt;
     if (menuItem) menuItem.closest('.pop').hidden = true;
     const el = e.target.closest('[data-action]');
     if (el && actions[el.dataset.action]) { e.preventDefault(); Promise.resolve().then(() => actions[el.dataset.action](el)).catch(fail); return; }
+    const th = e.target.closest('th[data-sort]');
+    if (th) {
+      const index = [...th.parentElement.children].indexOf(th);
+      const dir = th.getAttribute('aria-sort') === 'ascending' ? -1 : 1;
+      state.sorts[current] = { index, dir };
+      sortTable(th, dir);
+      return;
+    }
     const log = e.target.closest('.logline');
     if (log && !String(getSelection())) { log.classList.toggle('open'); return; }
     const row = e.target.closest('[data-href]');
@@ -1451,11 +2009,11 @@ Authorization: Bearer &lt;token&gt;
     e.preventDefault();
     const button = $('button:not([type=button])', form);
     const lock = button && !form.matches('[data-form=chat]');
-    if (lock) button.disabled = true;
+    if (lock) { button.disabled = true; button.classList.add('loading'); }
     Promise.resolve().then(() => forms[form.dataset.form](form)).catch((err) => {
       const slot = $('.form-error', form);
       if (slot) slot.textContent = err.message; else fail(err);
-    }).finally(() => { if (lock) button.disabled = false; });
+    }).finally(() => { if (lock) { button.disabled = false; button.classList.remove('loading'); } });
   });
   document.addEventListener('input', (e) => {
     if (e.target.id !== 'user-filter') return;
@@ -1466,13 +2024,58 @@ Authorization: Bearer &lt;token&gt;
     const el = e.target.closest('[data-change]');
     if (el && changes[el.dataset.change]) Promise.resolve().then(() => changes[el.dataset.change](el)).catch(fail);
   });
+  // Click a column heading to sort by it; click again to reverse.
+  function sortTable(th, dir) {
+    const table = th.closest('table');
+    const index = [...th.parentElement.children].indexOf(th);
+    const numeric = th.dataset.sort === 'num';
+    const value = (row) => { const c = row.cells[index]; const v = c.dataset.v ?? c.textContent.trim(); return numeric ? Number(v) || 0 : v.toLowerCase(); };
+    [...table.rows].slice(1).sort((a, b) => (value(a) > value(b) ? 1 : value(a) < value(b) ? -1 : 0) * dir).forEach((row) => row.parentElement.appendChild(row));
+    [...th.parentElement.children].forEach((h) => h.removeAttribute('aria-sort'));
+    th.setAttribute('aria-sort', dir === 1 ? 'ascending' : 'descending');
+  }
+
+  function shortcutsDialog() {
+    if ($('dialog[open]')) return;
+    const d = document.createElement('dialog');
+    d.className = 'modal';
+    const keys = [['Ctrl K', 'Search, jump to a page, or ask the AI'], ['Ctrl B', 'Show or hide the sidebar'], ['?', 'Show this list'],
+      ['Enter', 'Send a message in the console'], ['Shift Enter', 'New line in the console'], ['Esc', 'Close a dialog or menu']];
+    d.innerHTML = `<h3>Keyboard shortcuts</h3><div class="keys">${keys.map(([k, t]) => `<div><span>${k.split(' ').map((p) => `<kbd>${p}</kbd>`).join(' ')}</span><span>${t}</span></div>`).join('')}</div>
+      <p style="margin:14px 0 0">Tables sort when you click a column heading. Chart legends hide and show series. Chart bars open the matching events.</p>
+      <div class="row end" style="margin-top:16px"><button class="btn" data-action="dialog-close">Close</button></div>`;
+    d.addEventListener('close', () => d.remove());
+    document.body.appendChild(d);
+    d.showModal();
+  }
+
+  document.addEventListener('keyup', (e) => {
+    if (!e.target.matches || !e.target.matches('.pw-wrap input') || !e.getModifierState) return;
+    const note = $('.caps', e.target.closest('.field'));
+    if (note) note.hidden = !e.getModifierState('CapsLock');
+  });
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && $('#log-drawer') && !$('dialog[open]')) { closeDrawer(); return; }
+    if (e.key === 'Enter' && e.target.matches && e.target.matches('.logrow')) { openLogDrawer(Number(e.target.dataset.i)); return; }
+    if (e.key === '?' && $('.shell') && !/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) { e.preventDefault(); shortcutsDialog(); return; }
     if (!(e.ctrlKey || e.metaKey) || !$('.shell')) return;
     if (e.key.toLowerCase() === 'b') { e.preventDefault(); actions.drawer(); }
     if (e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); }
   });
 
   document.addEventListener('focusin', (e) => { if (e.target.id === 'quick') { e.target.blur(); openPalette(); } });
+  document.addEventListener('mouseover', (e) => {
+    const shell = $('.shell');
+    const el = shell && shell.classList.contains('rail') && e.target.closest ? e.target.closest('.sidebar [data-tip]') : null;
+    let tip = $('#rail-tip');
+    if (!el) { if (tip) tip.hidden = true; return; }
+    if (!tip) { tip = document.createElement('div'); tip.id = 'rail-tip'; document.body.appendChild(tip); }
+    const box = el.getBoundingClientRect();
+    tip.textContent = el.dataset.tip;
+    tip.hidden = false;
+    tip.style.left = `${box.right + 10}px`;
+    tip.style.top = `${box.top + box.height / 2}px`;
+  });
 
   // ---------- routing / boot ----------
 
@@ -1489,6 +2092,8 @@ Authorization: Bearer &lt;token&gt;
     $('.shell').classList.remove('drawer');
     const view = $('#view');
     const seq = ++renderSeq;
+    clearInterval(state.logTimer);
+    if (!soft) { closeDrawer(); state.insight = null; }
     current = key + (id ? '/detail' : '');
     if (!soft) {
       view.innerHTML = '<div class="page skeleton"><div class="sk w30"></div><div class="sk w50 thin"></div><div class="sk block"></div><div class="sk block short"></div></div>';
@@ -1500,18 +2105,40 @@ Authorization: Bearer &lt;token&gt;
       const result = await views[key]({ id, params: new URLSearchParams(query), overview });
       if (seq !== renderSeq || !state.user) return;
       const top = view.scrollTop;
+      charts.clear();
       view.innerHTML = typeof result === 'string' ? result : result.html;
       if (!soft && view.firstElementChild) view.firstElementChild.classList.add('enter');
       if (soft) view.scrollTop = top;
       if (result.mount) result.mount();
+      const insight = $('#ai-insight', view);
+      if (insight && state.insight && state.insight.key === current) { insight.innerHTML = state.insight.html; insight.dataset.text = state.insight.text; }
+      const sorted = state.sorts[current];
+      const heading = sorted && $('th[data-sort]', view) && $('th[data-sort]', view).parentElement.children[sorted.index];
+      if (heading && heading.dataset.sort) sortTable(heading, sorted.dir);
+      if (!soft && !matchMedia('(prefers-reduced-motion: reduce)').matches) countUp(view);
     } catch (err) {
       if (seq === renderSeq && state.user && !soft) view.innerHTML = `<div class="page">${empty('Something went wrong', esc(err.message), '<div style="margin-top:14px"><button class="btn" data-action="reload">Try again</button></div>', 'alert')}</div>`;
     }
   }
   actions.reload = () => route();
 
+  // Headline numbers count up when a page opens.
+  function countUp(scope) {
+    scope.querySelectorAll('.stat b').forEach((el) => {
+      const target = Number(el.textContent);
+      if (!Number.isFinite(target) || target <= 0) return;
+      const started = performance.now();
+      const tick = (now) => {
+        const p = Math.min(1, (now - started) / 550);
+        el.textContent = Math.round(target * (1 - (1 - p) ** 3));
+        if (p < 1 && el.isConnected) requestAnimationFrame(tick); else el.textContent = target;
+      };
+      requestAnimationFrame(tick);
+    });
+  }
+
   // Keep live views fresh without disturbing anyone who is typing, reading an expanded row or mid-dialog.
-  const AUTO_REFRESH = new Set(['overview', 'incidents', 'incidents/detail', 'events', 'assets', 'approvals', 'audit']);
+  const AUTO_REFRESH = new Set(['overview', 'watch', 'incidents', 'incidents/detail', 'events', 'infrastructure', 'assets', 'approvals', 'audit']);
   async function refreshUser() { const s = await api('/auth/state'); if (s.user) state.user = s.user; }
   setInterval(() => {
     if (!state.user || document.hidden || state.investigating) return;
@@ -1522,14 +2149,26 @@ Authorization: Bearer &lt;token&gt;
   }, REFRESH_MS);
 
   function authCard(title, text, inner, form = '') {
+    // The same pulse as the logo, drifting across the background.
+    const wave = `<path d="${Array.from({ length: 8 }, (_, i) => `M${i * 300} 80H${i * 300 + 100}l12-30 10 22 10-52 10 80 10-50 10 30H${i * 300 + 300}`).join('')}"/>`;
     app.innerHTML = `<div class="auth">
-      <div class="auth-brand"><div class="auth-brand-in">${logo()}
-        <h2>CERBERUS</h2><p>AI-assisted security operations</p>
-        <ul><li>${icon('alert', 18)}<span>Alerts from every engine, correlated into incidents</span></li>
-          <li>${icon('spark', 18)}<span>An AI analyst that answers from evidence it retrieves</span></li>
-          <li>${icon('check', 18)}<span>People approve every response action</span></li></ul></div></div>
-      <div class="auth-main"><${form ? `form ${form}` : 'div'} class="card">
-        <h1>${title}</h1><p>${text}</p>${inner}</${form ? 'form' : 'div'}></div></div>`;
+      <div class="auth-bg" aria-hidden="true"><span class="thresh t1"></span><span class="thresh t2"></span>
+        <svg class="w1" viewBox="0 0 2400 120" preserveAspectRatio="none">${wave}</svg><svg class="w2" viewBox="0 0 2400 120" preserveAspectRatio="none">${wave}</svg></div>
+      <div class="auth-wrap">
+        <div class="auth-lockup">${logo()}<h2>CERBERUS</h2></div>
+        <${form ? `form ${form}` : 'div'} class="card"><h1>${title}</h1><p>${text}</p>${inner}</${form ? 'form' : 'div'}>
+        <ul class="auth-points"><li>${icon('alert', 15)}Correlated incidents</li><li>${icon('spark', 15)}Evidence-backed AI analyst</li><li>${icon('check', 15)}Human-approved response</li></ul>
+      </div></div>`;
+    const auth = $('.auth');
+    auth.addEventListener('pointermove', (e) => { auth.style.setProperty('--mx', `${e.clientX}px`); auth.style.setProperty('--my', `${e.clientY}px`); });
+    auth.querySelectorAll('input[type=password]').forEach((input) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'pw-wrap';
+      input.replaceWith(wrap);
+      wrap.appendChild(input);
+      wrap.insertAdjacentHTML('beforeend', `<button type="button" class="pw-toggle" data-action="pw-toggle" aria-label="Show password" title="Show or hide the password">${icon('eye', 18)}</button>`);
+      wrap.insertAdjacentHTML('afterend', '<div class="caps" hidden>Caps Lock is on</div>');
+    });
     const first = $('.auth input');
     if (first) first.focus();
   }

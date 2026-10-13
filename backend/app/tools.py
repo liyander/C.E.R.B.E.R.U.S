@@ -7,7 +7,7 @@ queue a proposal for a human Enforcer.
 import json
 from datetime import datetime, timedelta, timezone
 
-from . import accounts, grafana, mailer, store
+from . import accounts, grafana, mailer, store, wazuh
 from .db import ago, audit, get_integration, iso, now
 
 APPROVAL_TTL_HOURS = 24
@@ -59,6 +59,15 @@ GRAFANA_TOOLS = [
         "CPU, memory, disk, load and uptime per host, and HTTP probe results. Call this first for any "
         "status, health, availability or performance question.", {})),
     ("prometheus_uid", _fn(
+        "get_metric_history",
+        "How a metric moved over time on a host: a timeline, the peak and when it happened, and the periods it was "
+        "high. Use this for every WHEN / since when / how long question about load, CPU, memory, disk or response "
+        "time, and to find the time window before asking why something happened.", {
+            "metric": {"type": "string", "enum": ["load", "cpu", "memory", "disk", "response_time"]},
+            "host": {"type": "string", "description": "Part of the instance name or IP, e.g. 172.16.3.100. Leave empty for all hosts."},
+            "hours": {"type": "integer", "description": "Look-back window in hours (default 24, max 168)"},
+        }, ["metric"])),
+    ("prometheus_uid", _fn(
         "query_prometheus",
         "Run a specific PromQL range query through Grafana; returns min/max/avg/last per series. Use for "
         "trends or metrics that get_server_health does not cover.", {
@@ -73,6 +82,40 @@ GRAFANA_TOOLS = [
 ]
 
 
+WAZUH_TOOLS = [
+    _fn("wazuh_summary",
+        "Totals from Wazuh for a period: alerts by level, the top rules, agents and source IPs. Use it for 'what is "
+        "Wazuh seeing', 'who is attacking us', 'which machine has the most alerts'.", {
+            "hours": {"type": "integer", "description": "Look-back window in hours (default 24, max 720)"},
+            "agent": {"type": "string", "description": "Limit to one Wazuh agent name"},
+        }),
+    _fn("wazuh_agents",
+        "Every machine enrolled in Wazuh: name, id, IP, operating system, whether it is active or disconnected and "
+        "when it last reported. Use it for 'which agents are offline' and to get exact agent names.", {}),
+    _fn("wazuh_configuration_assessment",
+        "The Wazuh configuration assessment (SCA / CIS benchmark / hardening / compliance score) of one agent: per "
+        "benchmark the score, passed, failed and not-applicable counts and last scan time, plus the checks with "
+        "their remediation. This is the ONLY source for it; alert searches do not contain it.", {
+            "agent": {"type": "string", "description": "Wazuh agent name, id or IP"},
+            "result": {"type": "string", "enum": ["failed", "passed", "not applicable", "all"],
+                       "description": "Which checks to list (default failed)"},
+            "text": {"type": "string", "description": "Only checks mentioning these words, e.g. ssh, /tmp, password"},
+            "limit": {"type": "integer", "description": "Max checks per benchmark (default 25, max 60)"},
+            "offset": {"type": "integer", "description": "Skip this many checks, to page through a long list"},
+        }, ["agent"]),
+    _fn("search_wazuh_alerts",
+        "Individual recent alerts straight from Wazuh, newest first, with their log line. Use it when you need the "
+        "detail behind a grouped Wazuh event: exact times, users, URLs, log text.", {
+            "agent": {"type": "string", "description": "Exact Wazuh agent name"},
+            "rule_id": {"type": "string"},
+            "source_ip": {"type": "string"},
+            "text": {"type": "string", "description": "Words to find in the rule description or the log line"},
+            "min_level": {"type": "integer", "description": "Wazuh level 0-15"},
+            "hours": {"type": "integer", "description": "Look-back window in hours (default 24)"},
+            "limit": {"type": "integer", "description": "Max alerts (default 20, max 30)"},
+        }),
+]
+
 REPORT_TOOL = _fn(
     "send_report_to_admins",
     "Email a report to the CERBERUS admins. Only call this when the user explicitly asks to send, email or "
@@ -86,6 +129,8 @@ REPORT_TOOL = _fn(
 def available_tools(conn) -> list[dict]:
     cfg = get_integration(conn, "grafana")
     extra = [spec for key, spec in GRAFANA_TOOLS if cfg.get("url") and cfg.get(key)]
+    if wazuh.is_ready(wazuh.settings(conn)):
+        extra += WAZUH_TOOLS
     if mailer.is_configured(mailer.config(conn)) and accounts.admin_emails(conn):
         extra.append(REPORT_TOOL)
     return BASE_TOOLS + extra
@@ -186,6 +231,47 @@ def _server_health(conn, a, actor):
     return grafana.server_health(get_integration(conn, "grafana"))
 
 
+def _wazuh_summary(conn, a, actor):
+    return wazuh.summary(wazuh.settings(conn), hours=a.get("hours", 24), agent=a.get("agent", ""))
+
+
+def _local_times(rows: list[dict], keys: tuple, tz_minutes) -> None:
+    """Rewrite Wazuh's UTC timestamps in the user's own time, as the Wazuh dashboard shows them."""
+    tz = store.clamp(tz_minutes, -720, 840, 0)
+    for row in rows:
+        for key in keys:
+            try:
+                stamp = datetime.fromisoformat(str(row[key]).replace("Z", "+00:00")) + timedelta(minutes=tz)
+                row[key] = f"{stamp:%Y-%m-%d %H:%M:%S} {grafana.tz_label(tz)}"
+            except (KeyError, ValueError):
+                pass
+
+
+def _wazuh_agents(conn, a, actor):
+    result = wazuh.agents(wazuh.settings(conn))
+    _local_times(result["agents"], ("last_seen",), a.get("_tz"))
+    return result
+
+
+def _wazuh_sca(conn, a, actor):
+    result = wazuh.configuration_assessment(wazuh.settings(conn), agent=a.get("agent", ""), result=a.get("result", "failed"),
+                                            text=a.get("text", ""), limit=a.get("limit", 25), offset=a.get("offset", 0))
+    _local_times([result["agent"]], ("last_seen",), a.get("_tz"))
+    _local_times(result["policies"], ("last_scan",), a.get("_tz"))
+    return result
+
+
+def _wazuh_search(conn, a, actor):
+    return wazuh.search_alerts(wazuh.settings(conn), agent=a.get("agent", ""), rule_id=a.get("rule_id", ""),
+                               source_ip=a.get("source_ip", ""), text=a.get("text", ""), min_level=a.get("min_level", 1),
+                               hours=a.get("hours", 24), limit=a.get("limit", 20))
+
+
+def _metric_history(conn, a, actor):
+    return grafana.metric_history(get_integration(conn, "grafana"), str(a.get("metric", "")), str(a.get("host", "")),
+                                  a.get("hours", 24), store.clamp(a.get("_tz"), -720, 840, 0))
+
+
 def _query_loki(conn, a, actor):
     return grafana.query_loki(get_integration(conn, "grafana"), a.get("logql", ""),
                               a.get("minutes", 60), a.get("limit", 30))
@@ -194,11 +280,13 @@ def _query_loki(conn, a, actor):
 HANDLERS = {
     "search_events": _search_events, "list_incidents": _list_incidents, "get_incident": _get_incident,
     "list_assets": _list_assets, "propose_response_action": _propose,
-    "send_report_to_admins": _send_report, "get_server_health": _server_health, "query_prometheus": _query_prometheus, "query_loki": _query_loki,
+    "send_report_to_admins": _send_report, "wazuh_summary": _wazuh_summary, "search_wazuh_alerts": _wazuh_search,
+    "wazuh_agents": _wazuh_agents, "wazuh_configuration_assessment": _wazuh_sca,
+    "get_server_health": _server_health, "get_metric_history": _metric_history, "query_prometheus": _query_prometheus, "query_loki": _query_loki,
 }
 
 
-def execute(conn, name: str, args, actor: str) -> str:
+def execute(conn, name: str, args, actor: str, tz_minutes: int = 0) -> str:
     """Run one tool call and return a size-capped JSON string for the model."""
     allowed = {t["function"]["name"] for t in available_tools(conn)}
     if not isinstance(args, dict):
@@ -207,8 +295,9 @@ def execute(conn, name: str, args, actor: str) -> str:
         result = {"error": f"unknown or unavailable tool '{name}'"}
     else:
         try:
-            result = HANDLERS[name](conn, args, actor)
-        except grafana.GrafanaError as exc:
+            # The user's timezone travels beside the model's arguments so tools can return local times.
+            result = HANDLERS[name](conn, {**args, "_tz": tz_minutes}, actor)
+        except (grafana.GrafanaError, wazuh.WazuhError) as exc:
             result = {"error": str(exc)}
     # Report bodies can be long; the audit entry records that it was sent, not the whole text.
     logged = {k: (v if k != "report" else f"<{len(str(v))} characters>") for k, v in args.items()}
