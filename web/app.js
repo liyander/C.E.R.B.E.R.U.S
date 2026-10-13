@@ -8,7 +8,7 @@
   const REFRESH_MS = 30000;
   const CHAT_KEY = 'cerberus-chat-id';
   const APP_VERSION = '0.2.0'; // must match VERSION in backend/app/main.py
-  const state = { user: null, chat: [], chatId: null, convos: [], busy: false, live: null, abort: null, presets: [], hidden: {}, sorts: {}, emailReady: false, aiReady: false, aiTools: [], investigating: false };
+  const state = { user: null, chat: [], chatId: null, convos: [], busy: false, live: null, abort: null, presets: [], hidden: {}, sorts: {}, apps: [], appsLoaded: false, navKey: '', emailReady: false, aiReady: false, aiTools: [], investigating: false };
 
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -75,6 +75,11 @@
     download: 'M12 4v11M7 11l5 5 5-5M5 20h14',
     star: 'M12 4l2.400 5 5.600.800-4 3.900.900 5.500-4.900-2.600-4.900 2.600.900-5.500-4-3.900 5.600-.800z',
     mail: 'M3 6h18v12H3zM3 7l9 6 9-6',
+    grid: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z',
+    cloud: 'M7 18a4 4 0 010-8 5.5 5.5 0 0110.6-1.5A4.5 4.5 0 0117.5 18z',
+    layers: 'M12 4l9 5-9 5-9-5zM3 14l9 5 9-5',
+    shield: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM12 8v5M12 16v.5',
+    external: 'M14 4h6v6M20 4l-9 9M18 14v6H4V6h6',
   };
   const icon = (name, size = 18) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.700" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
 
@@ -155,6 +160,8 @@
     const pages = NAV.flatMap(([, items]) => items).filter((item) => !item[3] || isAdmin())
       .map(([id, text, ic]) => ({ label: text, icon: ic, href: `#/${id}` }));
     pages.push({ label: 'My account', icon: 'user', href: '#/account' });
+    state.apps.filter((a) => a.connected).forEach((a) => a.menu.forEach((g) => g.items.filter((it) => it.id).forEach((it) =>
+      pages.push({ label: `${a.name}: ${it.label}`, icon: ICONS[it.icon] ? it.icon : 'list', href: `#/app/${a.id}/${it.id}` }))));
     let items = []; let sel = 0;
     const render = () => {
       const q = input.value.trim();
@@ -336,19 +343,55 @@
   const ADMIN_VIEWS = new Set(NAV.flatMap(([, items]) => items).filter((item) => item[3]).map((item) => item[0]));
   const TITLES = { account: 'My account', ...Object.fromEntries(NAV.flatMap(([, items]) => items).map(([id, text]) => [id, text])) };
 
+  // The application chosen in the navbar: null means "All applications", the normal CERBERUS menu.
+  const activeApp = () => state.apps.find((a) => a.id === pref.get('app', 'all')) || null;
+  const NAV_BADGES = { incidents: 1, watch: 1, approvals: 1 };
+  const navLink = (id, href, text, ic) => `<a href="${esc(href)}" data-nav="${esc(id)}" data-tip="${esc(text)}" aria-label="${esc(text)}">${icon(ICONS[ic] ? ic : 'list')}<span>${esc(text)}</span>${
+    NAV_BADGES[id] ? `<span class="count" data-badge="${id}" hidden></span>` : ''}</a>`;
+  const navGroup = (key, label, links) => {
+    const closed = closedGroups().includes(key);
+    return `<div class="nav-group ${closed ? 'closed' : ''}" data-group="${esc(key)}">
+      <button type="button" class="nav-label" data-action="nav-group" aria-expanded="${!closed}"><span>${esc(label)}</span>${icon('chevron', 13)}</button>
+      <div class="nav-items">${links}</div></div>`;
+  };
+  function navHtml() {
+    const a = activeApp();
+    if (!a) {
+      return NAV.map(([label, items]) => [label, items.filter((item) => !item[3] || isAdmin())]).filter(([, items]) => items.length)
+        .map(([label, items]) => { const links = items.map(([id, text, ic]) => navLink(id, `#/${id}`, text, ic)).join(''); return label ? navGroup(label, label, links) : links; }).join('');
+    }
+    const head = `<div class="nav-app"><span class="dot ${a.connected ? 'on' : 'off'}"></span><div><b>${esc(a.name)}</b><small>${esc(a.connected ? a.about : 'Not connected yet')}</small></div>
+      <button type="button" class="btn sm ghost" data-action="app-pick" data-value="all" title="Back to everything in CERBERUS">All</button></div>`;
+    return head + a.menu.map((g) => {
+      const links = g.items.map((it) => (it.id ? navLink(`app/${a.id}/${it.id}`, `#/app/${a.id}/${it.id}`, it.label, it.icon)
+        : navLink(it.route.replace(/^#\//, '').split(/[/?]/)[0], it.route, it.label, it.icon))).join('');
+      return g.label ? navGroup(`${a.id}:${g.label}`, g.label, links) : links;
+    }).join('');
+  }
+  function switcherHtml() {
+    const cur = activeApp() ? activeApp().id : 'all';
+    const item = (id, name, about, mark) => `<button class="menu-item app-item ${id === cur ? 'on' : ''}" data-action="app-pick" data-value="${esc(id)}">
+      ${mark}<span class="app-text"><b>${esc(name)}</b><small>${esc(about)}</small></span></button>`;
+    return `<div class="muted small pop-title">Show the menu of</div>${item('all', 'All applications', 'Everything in CERBERUS', icon('grid', 16))}
+      ${state.apps.map((a) => item(a.id, a.name, a.connected ? a.about : 'Not connected yet', `<span class="dot ${a.connected ? 'on' : 'off'}"></span>`)).join('')}
+      ${isAdmin() ? `<div class="menu-sep"></div><a class="menu-item" href="#/integrations">${icon('plus', 16)}<span>Connect an application</span></a>` : ''}`;
+  }
+  const markNav = () => document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === state.navKey));
+  function renderNav() {
+    if (!$('.shell')) return;
+    $('.nav').innerHTML = navHtml();
+    $('#app-pop').innerHTML = switcherHtml();
+    $('#app-name').textContent = activeApp() ? activeApp().name : 'All applications';
+    markNav();
+  }
+  async function loadApps() {
+    state.appsLoaded = true;
+    try { state.apps = await api('/apps'); } catch { state.apps = []; }
+    renderNav();
+  }
+
   function ensureShell() {
     if ($('.shell')) return;
-    const visible = NAV.map(([label, items]) => [label, items.filter((item) => !item[3] || isAdmin())]).filter(([, items]) => items.length);
-    const badges = { incidents: 'incidents', watch: 'watch', approvals: 'approvals' };
-    const link = ([id, text, ic]) => `<a href="#/${id}" data-nav="${id}" data-tip="${text}" aria-label="${text}">${icon(ic)}<span>${text}</span>${
-      badges[id] ? `<span class="count" data-badge="${id}" hidden></span>` : ''}</a>`;
-    const nav = visible.map(([label, items]) => {
-      if (!label) return items.map(link).join('');
-      const closed = closedGroups().includes(label);
-      return `<div class="nav-group ${closed ? 'closed' : ''}" data-group="${label}">
-        <button type="button" class="nav-label" data-action="nav-group" aria-expanded="${!closed}"><span>${label}</span>${icon('chevron', 13)}</button>
-        <div class="nav-items">${items.map(link).join('')}</div></div>`;
-    }).join('');
     app.innerHTML = `
       <div class="shell ${pref.get('sidebar', 'open') === 'rail' ? 'rail' : ''}">
         <aside class="sidebar">
@@ -356,7 +399,7 @@
             <button class="side-collapse" data-action="drawer" aria-label="Collapse or expand the sidebar" data-tip="Expand sidebar">${icon('panel', 17)}</button></div>
           <form class="quick" data-form="quick">${icon('search', 16)}
             <input type="text" name="q" id="quick" placeholder="Search or jump to…" autocomplete="off" aria-label="Search or jump to a page" readonly><kbd>Ctrl K</kbd></form>
-          <nav class="nav" aria-label="Main">${nav}</nav>
+          <nav class="nav" aria-label="Main">${navHtml()}</nav>
           <div class="side-status">
             <a href="#/console" id="ss-ai" data-tip="AI analyst"><span class="dot"></span><span class="ss-text"><b>AI analyst</b><small>Checking…</small></span></a>
             <a href="#/watch" id="ss-watch" data-tip="AI watch"><span class="dot"></span><span class="ss-text"><b>AI watch</b><small>Checking…</small></span></a>
@@ -378,6 +421,8 @@
         <div class="main">
           <header class="topbar">
             <button class="btn ghost icon menu-btn" data-action="drawer" title="Show or hide the sidebar (Ctrl+B)" aria-label="Toggle sidebar">${icon('menu')}</button>
+            <div class="pop-wrap"><button class="btn ghost app-btn" data-action="menu" title="Choose which application's menu to show" aria-label="Choose application">${icon('grid', 16)}<span id="app-name">${esc(activeApp() ? activeApp().name : 'All applications')}</span>${icon('chevron', 13)}</button>
+              <div class="pop menu left" id="app-pop" hidden>${switcherHtml()}</div></div>
             <span class="top-title" id="top-title"></span>
             <span class="spacer"></span>
             <span class="live" title="Lists refresh every 30 seconds"><span class="dot on"></span>Live</span>
@@ -955,6 +1000,74 @@
       ${events.length ? `<div class="card">${eventTable(events)}</div>` : empty('No events match', 'Connect a source under Integrations, or widen the filter.', '', 'search')}`);
     const keep = `${f.q ? `&q=${enc(f.q)}` : ''}${f.source ? `&source=${enc(f.source)}` : ''}${f.min !== '1' ? `&min=${enc(f.min)}` : ''}${f.range === '7d' ? '&range=7d' : ''}`;
     return { html, mount: () => sevChart('events-volume', buckets, per, keep) };
+  };
+
+  // ---------- application workspaces: one screen draws every page the server describes ----------
+
+  const TONE_BAR = { critical: 'sev-critical', high: 'sev-high', medium: 'sev-medium', low: 'sev-low' };
+  const outLink = (url, inner, cls = 'link') => `<a class="${cls}" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${inner}</a>`;
+  const appTile = (t) => {
+    const numeric = typeof t.value === 'number';
+    const inner = `<div><b class="raw ${numeric ? '' : 'stat-text'}">${numeric ? t.value.toLocaleString() : esc(t.value)}</b><span>${esc(t.label)}${t.hint ? ` <small>· ${esc(t.hint)}</small>` : ''}</span></div>`;
+    return t.href ? `<a class="card stat t-${esc(t.tone)}" href="${esc(t.href)}">${inner}</a>` : `<div class="card stat still t-${esc(t.tone)}">${inner}</div>`;
+  };
+  const appBars = (b) => {
+    const max = Math.max(1, ...b.items.map((i) => i.value));
+    return `<div class="card card-pad"><h2>${esc(b.title)}</h2><div class="hbars wide">${b.items.length ? b.items.map((i) => `
+      <${i.href ? `a href="${esc(i.href)}"` : 'div'} class="hbar" title="${esc(i.label)}: ${i.value.toLocaleString()}"><span class="hbar-label">${esc(i.label)}</span>
+        <span class="hbar-track"><span class="hbar-fill ${TONE_BAR[i.tone] || 'series'}" style="width:${i.value ? Math.max(2, (i.value / max) * 100) : 0}%"></span></span>
+        <span class="hbar-val">${fmtNum(i.value)}</span></${i.href ? 'a' : 'div'}>`).join('') : `<div class="muted small" style="padding:6px 0">${esc(b.empty)}</div>`}</div></div>`;
+  };
+  const appTrend = (b) => {
+    const pts = b.points;
+    if (!pts.length) return '';
+    const max = Math.max(1, ...pts.map((p) => p.v));
+    const peak = pts.reduce((a, p) => (p.v > a.v ? p : a), pts[0]);
+    return `<div class="card card-pad trend-card"><div class="section-head" style="margin-bottom:10px"><h2>${esc(b.title)}</h2>
+        <span class="muted small">Busiest: ${peak.v.toLocaleString()} around ${fmtTime(peak.t)}</span></div>
+      <div class="trend">${pts.map((p) => `<span class="trend-col" title="${fmtTime(p.t)} · ${p.v.toLocaleString()}"><i style="height:${p.v ? Math.max(3, (p.v / max) * 100) : 0}%"></i></span>`).join('')}</div>
+      <div class="trend-axis"><span>${fmtTime(pts[0].t)}</span><span>${fmtTime(pts[pts.length - 1].t)}</span></div></div>`;
+  };
+  const appCell = (c, r, first) => {
+    const v = r[c.key];
+    if (c.kind === 'time') return v ? `<td class="nowrap" data-v="${Date.parse(v) || 0}">${agoCell(v)}</td>` : '<td data-v="0">—</td>';
+    if (c.kind === 'badge') return `<td>${v && v.text ? `<span class="badge ${esc(v.tone)}">${esc(v.text)}</span>` : ''}</td>`;
+    if (c.kind === 'num') return `<td data-v="${Number(v) || 0}">${typeof v === 'number' ? v.toLocaleString() : esc(v ?? '')}</td>`;
+    const text = esc(v === 0 ? '0' : v || '—');
+    const url = first && !r._detail && safeUrl(r._url);
+    return `<td class="${c.kind === 'mono' ? 'mono brk' : c.kind === 'wrap' ? 'wrap' : 'nowrap'}">${url ? outLink(url, `${text} ${icon('external', 13)}`) : text}</td>`;
+  };
+  const appTable = (b) => {
+    const row = (r) => `<tr ${r._href ? `class="clickable" data-href="${esc(r._href)}"`
+      : r._detail ? `class="clickable" data-action="row-detail" data-detail="${esc(r._detail)}" data-url="${esc(safeUrl(r._url))}" data-cols="${b.columns.length}"` : ''}>${
+      b.columns.map((c, i) => appCell(c, r, i === 0)).join('')}</tr>`;
+    return `<div class="section-head app-section"><h2>${esc(b.title)}</h2>${b.note_time ? `<span class="muted small">${esc(b.note_label)} ${fmtTime(b.note_time)}</span>` : ''}</div>
+      ${b.note ? `<p class="muted small app-note">${esc(b.note)}</p>` : ''}
+      ${b.rows.length ? `<div class="card"><div class="table-scroll"><table><tr>${b.columns.map((c) => `<th data-sort="${c.kind === 'num' || c.kind === 'time' ? 'num' : 'text'}">${esc(c.label)}</th>`).join('')}</tr>
+        ${b.rows.map(row).join('')}</table></div></div>${b.rows.some((r) => r._detail) ? '<p class="muted small" style="margin:8px 2px 0">Click a row for the details.</p>' : ''}`
+    : `<div class="card card-pad muted">${esc(b.empty)}</div>`}`;
+  };
+
+  views.app = async ({ id, sub, params }) => {
+    const pageId = sub || 'overview';
+    const base = `#/app/${encodeURIComponent(id)}/${encodeURIComponent(pageId)}`;
+    const d = await api(`/apps/${encodeURIComponent(id)}/${encodeURIComponent(pageId)}${params.toString() ? `?${params}` : ''}`);
+    if (d.connected === false) {
+      return page(esc(d.app_name), '', '', empty(`${esc(d.app_name)} is not connected`, isAdmin() ? 'Add its address and sign-in details under Integrations.' : 'Ask an admin to connect it under Integrations.',
+        isAdmin() ? '<div style="margin-top:14px"><a class="btn primary" href="#/integrations">Open Integrations</a></div>' : '', 'plug'));
+    }
+    const filters = d.filters.length ? `<form class="row app-filters" data-form="app-filter" data-base="${esc(base)}">${d.filters.map((f) => (f.kind === 'select'
+      ? `<select name="${esc(f.name)}" style="width:auto" aria-label="${esc(f.label)}" data-change="submit-form">${f.options.map(([v, t]) => `<option value="${esc(v)}" ${v === f.value ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>`
+      : `<input type="text" name="${esc(f.name)}" value="${esc(f.value)}" placeholder="${esc(f.label)}" aria-label="${esc(f.label)}" style="width:${Number(f.width) || 220}px">`)).join('')}
+      <button class="btn">Apply</button>${params.toString() ? `<a class="btn ghost" href="${esc(base)}">Clear</a>` : ''}</form>` : '';
+    const tiles = d.tiles.length ? `<div class="stats app-stats" style="--n:${Math.min(4, d.tiles.length)}">${d.tiles.map(appTile).join('')}</div>` : '';
+    let body = '';
+    let run = [];
+    const flush = () => { if (run.length) { body += `<div class="app-grid">${run.join('')}</div>`; run = []; } };
+    d.blocks.forEach((b) => { if (b.type === 'bars') { run.push(appBars(b)); return; } flush(); body += b.type === 'trend' ? appTrend(b) : appTable(b); });
+    flush();
+    const open = d.external && safeUrl(d.external.url) ? outLink(d.external.url, `${icon('external', 16)} ${esc(d.external.label)}`, 'btn') : '';
+    return { html: page(esc(d.title), esc(d.subtitle || ''), open, filters + tiles + body), mount: () => { $('#top-title').textContent = `${d.app_name} · ${d.label}`; } };
   };
 
   // ---------- AI briefings ----------
@@ -1587,6 +1700,23 @@ Authorization: Bearer &lt;token&gt;
     },
     palette() { const pop = $('#palette-pop'); pop.hidden = !pop.hidden; },
     shortcuts() { shortcutsDialog(); },
+    'app-pick'(el) {
+      pref.set('app', el.dataset.value);
+      renderNav();
+      const target = el.dataset.value === 'all' ? '#/overview' : `#/app/${el.dataset.value}/overview`;
+      if (location.hash === target) route(); else location.hash = target;
+    },
+    'row-detail'(el) {
+      if (String(getSelection())) return;
+      const next = el.nextElementSibling;
+      if (next && next.classList.contains('detail-row')) { next.remove(); el.classList.remove('open'); return; }
+      const tr = document.createElement('tr');
+      tr.className = 'detail-row';
+      const url = safeUrl(el.dataset.url);
+      tr.innerHTML = `<td colspan="${Number(el.dataset.cols) || 1}"><pre>${esc(el.dataset.detail)}</pre>${url ? outLink(url, `Open reference ${icon('external', 13)}`, 'link small') : ''}</td>`;
+      el.after(tr);
+      el.classList.add('open');
+    },
     'nav-group'(el) {
       const group = el.closest('.nav-group');
       const closed = group.classList.toggle('closed');
@@ -1866,12 +1996,19 @@ Authorization: Bearer &lt;token&gt;
   const forms = {
     noop() {},
     quick() { openPalette(); },
+    'app-filter'(f) {
+      const p = new URLSearchParams();
+      new FormData(f).forEach((v, k) => { if (String(v).trim()) p.set(k, String(v).trim()); });
+      const target = `${f.dataset.base}${p.toString() ? `?${p}` : ''}`;
+      if (location.hash === target) route(); else location.hash = target;
+    },
     ask(f) { const q = f.q.value.trim(); if (q) location.hash = `#/console?q=${encodeURIComponent(q)}`; },
     chat(f) { if (state.busy) return; const q = f.q.value; f.q.value = ''; f.q.style.height = 'auto'; sendChat(q); },
     async wazuh(f) {
       const body = { enabled: f.enabled.checked, url: f.url.value.trim(), username: f.username.value.trim(), password: f.password.value, verify_tls: f.verify_tls.checked,
         min_level: Number(f.min_level.value), exclude_rules: f.exclude_rules.value.trim(), poll_minutes: Number(f.poll_minutes.value) };
       await api('/integrations/wazuh', { method: 'PUT', body });
+      loadApps();
       if (!body.url) { toast('Wazuh settings cleared'); return route({ soft: true }); }
       $('#z-result').innerHTML = '<span class="spinner"></span> Testing…';
       const r = await api('/integrations/wazuh/test', { method: 'POST' }).catch((err) => { $('#z-result').textContent = ''; throw err; });
@@ -1911,6 +2048,7 @@ Authorization: Bearer &lt;token&gt;
       const body = { url: f.url.value.trim(), token: f.token.value.trim(), verify_tls: f.verify_tls.checked,
         prometheus_uid: f.prometheus_uid.value.trim(), loki_uid: f.loki_uid.value.trim() };
       await api('/integrations/grafana', { method: 'PUT', body });
+      loadApps();
       if (!body.url) { toast('Grafana query access cleared'); return route({ soft: true }); }
       const out = $('#g-result');
       out.innerHTML = '<span class="spinner"></span> Testing…';
@@ -2027,6 +2165,8 @@ Authorization: Bearer &lt;token&gt;
   // Click a column heading to sort by it; click again to reverse.
   function sortTable(th, dir) {
     const table = th.closest('table');
+    table.querySelectorAll('tr.detail-row').forEach((r) => r.remove());
+    table.querySelectorAll('tr.open').forEach((r) => r.classList.remove('open'));
     const index = [...th.parentElement.children].indexOf(th);
     const numeric = th.dataset.sort === 'num';
     const value = (row) => { const c = row.cells[index]; const v = c.dataset.v ?? c.textContent.trim(); return numeric ? Number(v) || 0 : v.toLowerCase(); };
@@ -2084,17 +2224,21 @@ Authorization: Bearer &lt;token&gt;
   async function route({ soft = false } = {}) {
     if (!state.user) return;
     const [path, query = ''] = location.hash.replace(/^#\/?/, '').split('?');
-    const [name = '', id] = path.split('/');
+    const [name = '', id, sub] = path.split('/');
     const key = views[name] && (!ADMIN_VIEWS.has(name) || isAdmin()) ? name : 'overview';
+    if (!state.appsLoaded) await loadApps();
     ensureShell();
-    document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === key));
-    $('#top-title').textContent = TITLES[key];
+    // Opening an application page directly switches the sidebar to that application.
+    if (key === 'app' && pref.get('app', 'all') !== id && state.apps.some((a) => a.id === id)) { pref.set('app', id); renderNav(); }
+    state.navKey = key === 'app' ? `app/${id}/${sub || 'overview'}` : key;
+    markNav();
+    $('#top-title').textContent = key === 'app' ? ((state.apps.find((a) => a.id === id) || {}).name || 'Application') : TITLES[key];
     $('.shell').classList.remove('drawer');
     const view = $('#view');
     const seq = ++renderSeq;
     clearInterval(state.logTimer);
     if (!soft) { closeDrawer(); state.insight = null; }
-    current = key + (id ? '/detail' : '');
+    current = key === 'app' ? state.navKey : key + (id ? '/detail' : '');
     if (!soft) {
       view.innerHTML = '<div class="page skeleton"><div class="sk w30"></div><div class="sk w50 thin"></div><div class="sk block"></div><div class="sk block short"></div></div>';
       view.scrollTop = 0;
@@ -2102,7 +2246,7 @@ Authorization: Bearer &lt;token&gt;
     const overview = loadOverview();
     overview.catch(() => {});
     try {
-      const result = await views[key]({ id, params: new URLSearchParams(query), overview });
+      const result = await views[key]({ id, sub, params: new URLSearchParams(query), overview });
       if (seq !== renderSeq || !state.user) return;
       const top = view.scrollTop;
       charts.clear();
@@ -2124,7 +2268,7 @@ Authorization: Bearer &lt;token&gt;
 
   // Headline numbers count up when a page opens.
   function countUp(scope) {
-    scope.querySelectorAll('.stat b').forEach((el) => {
+    scope.querySelectorAll('.stat b:not(.raw)').forEach((el) => {
       const target = Number(el.textContent);
       if (!Number.isFinite(target) || target <= 0) return;
       const started = performance.now();

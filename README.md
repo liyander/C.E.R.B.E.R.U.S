@@ -83,6 +83,24 @@ until it recovers and then happens again. Dismissed findings can be restored.
 It is off until an admin turns it on. The checks are plain thresholds, so they keep working
 with no AI model connected; the model only writes the explanation.
 
+## Application switcher
+
+The button at the left of the top bar chooses whose menu the sidebar shows. **All applications**
+is the normal CERBERUS menu. Choosing **Wazuh** or **Grafana** swaps the sidebar for that
+product's own menu, and each entry is a read-only page filled live from the connection saved
+under Integrations:
+
+- **Wazuh**: home, Discover, configuration assessment, malware detection, file integrity
+  monitoring, threat hunting, vulnerability detection, MITRE ATT&CK, PCI DSS / GDPR / HIPAA /
+  NIST 800-53 / TSC, Docker / AWS / GitHub, agents and server status. Configuration assessment,
+  agents and server status need CERBERUS to be connected to the Wazuh *dashboard* address.
+- **Grafana**: home, dashboards (open in Grafana), alert rules, notification configuration,
+  silences, active notifications and data sources, plus the existing Logs and Infrastructure pages.
+
+Everything is described in `backend/app/apps.py`. To add an application, write its page
+functions (each returns tiles, bars and tables as plain data) and add one entry to `APPS`;
+the switcher, sidebar, routing and Ctrl+K pick it up without changes to the web app.
+
 ## Users and roles
 
 The first account is the **admin**. Admins add people under **Users** and choose a role:

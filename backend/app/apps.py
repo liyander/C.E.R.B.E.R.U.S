@@ -6,6 +6,7 @@ tables, filters) that one generic screen in the web app draws. Everything is rea
 
 To add an application: write its page functions, then add one entry to APPS.
 """
+import re
 import time
 from urllib.parse import urlencode, urlsplit
 
@@ -49,6 +50,13 @@ def link(here: str, q: dict, **change) -> str:
     """This page again with some filters changed; blank values are dropped."""
     params = {k: v for k, v in {**q, **change}.items() if v not in (None, "")}
     return here + (f"?{urlencode(params)}" if params else "")
+
+
+def stamp(value):
+    """Timestamps in the one form every browser parses: 2026-10-13T09:13:52.912Z."""
+    if not value:
+        return None
+    return re.sub(r"(\.\d{3})\d+", r"\1", str(value)).replace("+0000", "Z")
 
 
 def badge(text, tone="") -> dict:
@@ -104,7 +112,7 @@ def _total(data: dict) -> int:
 
 def _alert_row(s: dict) -> dict:
     rule, d = s.get("rule") or {}, s.get("data") or {}
-    return {"time": s.get("timestamp"), "agent": (s.get("agent") or {}).get("name", ""),
+    return {"time": stamp(s.get("timestamp")), "agent": (s.get("agent") or {}).get("name", ""),
             "level": badge(rule.get("level", ""), level_tone(rule.get("level"))), "rule": rule.get("id", ""),
             "description": rule.get("description", ""), "source_ip": d.get("srcip", ""),
             "_detail": (s.get("full_log") or "")[:1500]}
@@ -121,7 +129,7 @@ def _fim_row(s: dict) -> dict:
     detail = "\n".join(f"{label}: {check[key]}" for key, label in (
         ("uname_after", "Owner"), ("gname_after", "Group"), ("perm_after", "Permissions"), ("size_after", "Size"),
         ("mtime_after", "Modified"), ("sha256_after", "SHA-256"), ("mode", "Detected by")) if check.get(key))
-    return {"time": s.get("timestamp"), "agent": (s.get("agent") or {}).get("name", ""), "path": check.get("path", ""),
+    return {"time": stamp(s.get("timestamp")), "agent": (s.get("agent") or {}).get("name", ""), "path": check.get("path", ""),
             "action": badge(check.get("event", ""), {"added": "info", "deleted": "critical", "modified": "medium"}.get(check.get("event"), "")),
             "changed": changed, "description": rule.get("description", ""), "_detail": detail}
 
@@ -130,22 +138,23 @@ FIM_COLUMNS = (("time", "Time", "time"), ("agent", "Agent", "text"), ("path", "F
                ("changed", "What changed", "text"), ("description", "Rule", "wrap"))
 
 
-def _alert_page(ctx, *, title, about, groups=None, row=_alert_row, columns=ALERT_COLUMNS, source=ALERT_SOURCE, empty="") -> dict:
+def _alert_page(ctx, *, title, about, groups=None, row=_alert_row, columns=ALERT_COLUMNS, source=ALERT_SOURCE, empty="", start_level="") -> dict:
     """Any page that is 'the alerts of one Wazuh module': volume over time, top rules and agents, latest alerts."""
     q, here = ctx["q"], ctx["here"]
     hours = _hours(q)
     agent, rule = store.text(q.get("agent"), 120), store.text(q.get("rule"), 20)
-    level = q.get("level") if q.get("level") in ("7", "10", "13") else ""
+    level = q.get("level") if q.get("level") in ("0", "7", "10", "13") else start_level
     words = store.text(q.get("text"), 200).replace("*", " ").replace("?", " ").strip()
-    keep = {"agent": agent, "hours": "" if hours == "24" else hours, "level": level, "rule": rule, "text": words}
+    keep = {"agent": agent, "hours": "" if hours == "24" else hours, "level": "" if level == start_level else level, "rule": rule, "text": words}
     filters = [{"range": {"timestamp": {"gte": f"now-{hours}h"}}}]
     filters += [{"term": {"agent.name": agent}}] if agent else []
     filters += [{"term": {"rule.id": rule}}] if rule else []
     filters += [{"terms": {"rule.groups": list(groups)}}] if groups else []
-    filters += [{"range": {"rule.level": {"gte": int(level)}}}] if level else []
+    filters += [{"range": {"rule.level": {"gte": int(level)}}}] if level not in ("", "0") else []
     must = [{"bool": {"minimum_should_match": 1, "should": [
         {"wildcard": {"rule.description": {"value": f"*{words}*", "case_insensitive": True}}},
         {"match_phrase": {"full_log": words}}]}}] if words else []
+    levels = [("0" if start_level else "", "All levels")] + list(LEVELS[1:])
     client = wazuh._Client(ctx["cfg"])
     try:
         agent_filter = _agent_select(client, agent)
@@ -163,13 +172,13 @@ def _alert_page(ctx, *, title, about, groups=None, row=_alert_row, columns=ALERT
     rows = [row(hit.get("_source", {})) for hit in data.get("hits", {}).get("hits", [])]
     return {
         "title": title, "subtitle": about,
-        "filters": [agent_filter, select("hours", "Period", hours, HOURS), select("level", "Level", level, LEVELS),
+        "filters": [agent_filter, select("hours", "Period", hours, HOURS), select("level", "Level", level, levels),
                     search_box("text", "Search description or log", words), search_box("rule", "Rule ID", rule, 110)],
         "tiles": [tile("Alerts", total), tile("Agents affected", len(_buckets(data, "agents"))),
                   tile("Rules triggered", int((aggs.get("rule_count") or {}).get("value") or 0)),
                   tile("Highest level", top, level_tone(top) if total else "")],
         "blocks": [
-            trend("Alerts over time", [{"t": b.get("key_as_string"), "v": b["doc_count"]} for b in _buckets(data, "time")]),
+            trend("Alerts over time", [{"t": stamp(b.get("key_as_string")), "v": b["doc_count"]} for b in _buckets(data, "time")]),
             bars("Top rules", [{"label": f"{b['key']} · {((b.get('name') or {}).get('buckets') or [{'key': ''}])[0]['key']}", "value": b["doc_count"],
                                "href": link(here, keep, rule=b["key"])} for b in _buckets(data, "rules")]),
             bars("By agent", [{"label": b["key"], "value": b["doc_count"], "href": link(here, keep, agent=b["key"])} for b in _buckets(data, "agents")]),
@@ -201,7 +210,7 @@ def wz_overview(ctx) -> dict:
     active = sum(1 for a in agents if a.get("status") == "active" and a.get("id") != "000")
     enrolled = sum(1 for a in agents if a.get("id") != "000")
     tones = {"Low (0-6)": "low", "Medium (7-9)": "medium", "High (10-12)": "high", "Critical (13+)": "critical"}
-    alerts = "#/app/wazuh/hunting"
+    alerts = "#/app/wazuh/discover"
     period = {"hours": "" if hours == "24" else hours, "agent": agent}
     return {
         "title": "Wazuh overview", "subtitle": "What Wazuh has detected across your enrolled machines.",
@@ -211,7 +220,7 @@ def wz_overview(ctx) -> dict:
                   tile("High (10-12)", levels.get("High (10-12)", 0), "high" if levels.get("High (10-12)") else "", href=link(alerts, period, level="10")),
                   tile("Critical (13+)", levels.get("Critical (13+)", 0), "critical" if levels.get("Critical (13+)") else "", href=link(alerts, period, level="13"))],
         "blocks": [
-            trend("Alerts over time", [{"t": b.get("key_as_string"), "v": b["doc_count"]} for b in _buckets(data, "time")]),
+            trend("Alerts over time", [{"t": stamp(b.get("key_as_string")), "v": b["doc_count"]} for b in _buckets(data, "time")]),
             bars("By level", [{"label": k, "value": levels.get(k, 0), "tone": tone} for k, tone in tones.items()]),
             bars("MITRE ATT&CK tactics", [{"label": b["key"], "value": b["doc_count"], "href": "#/app/wazuh/mitre"} for b in _buckets(data, "tactics")]),
             bars("Busiest agents", [{"label": b["key"], "value": b["doc_count"], "href": link(here, period, agent=b["key"])} for b in _buckets(data, "agents")]),
@@ -228,7 +237,8 @@ def wz_discover(ctx):
 
 
 def wz_hunting(ctx):
-    return _alert_page(ctx, title="Threat hunting", about="Search Wazuh alerts by agent, level, rule or text to follow a lead.")
+    return _alert_page(ctx, title="Threat hunting", start_level="7",
+                       about="The alerts worth a closer look: level 7 and above. Narrow them by agent, rule or text to follow a lead.")
 
 
 def wz_malware(ctx):
@@ -300,7 +310,7 @@ def wz_sca(ctx) -> dict:
                 for c in found.get("affected_items", [])]
         page["blocks"].append(table(
             f"{(p.get('name') or '').rstrip('.')} · {found.get('total_affected_items', len(rows))} {'checks' if result == 'all' else result}",
-            (("id", "ID", "num"), ("title", "Check", "wrap"), ("result", "Result", "badge")), rows,
+            (("id", "ID", "mono"), ("title", "Check", "wrap"), ("result", "Result", "badge")), rows,
             empty="No checks match."))
         page["blocks"][-1].update(note_label="Last scan", note_time=p.get("end_scan") or "")
     return page
@@ -335,7 +345,7 @@ def wz_vulnerabilities(ctx) -> dict:
         reference = str(v.get("reference") or "").split(",")[0].strip()
         rows.append({"cve": v.get("id", ""), "severity": badge(v.get("severity") or "-", VULN_TONE.get(v.get("severity"), "")),
                      "score": (v.get("score") or {}).get("base") or "", "package": pkg.get("name", ""), "version": pkg.get("version", ""),
-                     "agent": (s.get("agent") or {}).get("name", ""), "detected": v.get("detected_at"),
+                     "agent": (s.get("agent") or {}).get("name", ""), "detected": stamp(v.get("detected_at")),
                      "_detail": v.get("description") or "", "_url": reference if reference.startswith("https://") else ""})
     total = _total(data)
     return {
@@ -493,7 +503,7 @@ def _rules(cfg) -> tuple[list[dict], list[str]]:
                 rows.append({"name": r.get("name", ""), "state": badge(state or "unknown", {"firing": "critical", "pending": "medium", "inactive": "ok"}.get(state, "")),
                              "severity": (r.get("labels") or {}).get("severity", ""), "group": group.get("name", ""), "source": name,
                              "health": badge(r.get("health", ""), "ok" if r.get("health") == "ok" else "critical" if r.get("health") in ("err", "error") else ""),
-                             "evaluated": r.get("lastEvaluation") if str(r.get("lastEvaluation", "")).startswith("2") else None, "_state": state,
+                             "evaluated": stamp(r.get("lastEvaluation")) if str(r.get("lastEvaluation", "")).startswith("2") else None, "_state": state,
                              "_detail": "\n\n".join(filter(None, [notes.get("summary", ""), notes.get("description", ""), f"Query\n{r.get('query', '')}" if r.get("query") else "",
                                                                  f"Error\n{r['lastError']}" if r.get("lastError") else ""]))})
     order = {"firing": 0, "pending": 1}
