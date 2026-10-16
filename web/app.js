@@ -3267,6 +3267,15 @@ Authorization: Bearer &lt;token&gt;
       toast('Detection settings saved');
       route({ soft: true });
     },
+    async intel(f) {
+      await api('/integrations/intel', { method: 'PUT', body: {
+        greynoise_enabled: f.greynoise_enabled.checked,
+        abuseipdb_enabled: f.abuseipdb_enabled.checked,
+        abuseipdb_key: f.abuseipdb_key.value.trim(),
+      } });
+      toast('IP threat intelligence settings saved');
+      route({ soft: true });
+    },
     async reports(f) {
       await api('/reports', { method: 'PUT', body: { enabled: f.enabled.checked, frequency: f.frequency.value, weekday: Number(f.weekday.value), hour: Number(f.hour.value),
         send_to_admins: f.send_to_admins.checked, extra_recipients: f.extra_recipients.value.trim(), ai_summary: f.ai_summary.checked } });
@@ -3452,7 +3461,11 @@ Authorization: Bearer &lt;token&gt;
     const button = $('button:not([type=button])', form);
     const lock = button && !form.matches('[data-form=chat]');
     if (lock) { button.disabled = true; button.classList.add('loading'); }
-    Promise.resolve().then(() => forms[form.dataset.form](form, e.submitter)).catch((err) => {
+    Promise.resolve().then(() => {
+      const handler = forms[form.dataset.form];
+      if (typeof handler !== 'function') throw new Error(`This form cannot be saved (${form.dataset.form}).`);
+      return handler(form, e.submitter);
+    }).catch((err) => {
       const slot = $('.form-error', form);
       if (slot) slot.textContent = err.message; else fail(err);
     }).finally(() => { if (lock) { button.disabled = false; button.classList.remove('loading'); } });
