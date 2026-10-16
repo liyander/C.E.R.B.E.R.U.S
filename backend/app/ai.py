@@ -321,7 +321,9 @@ def _chat_completion(provider: dict, messages: list[dict], tool_specs: list[dict
                      max_tokens: int) -> tuple[dict, dict]:
     if not provider.get("model"):
         raise AIError("No model is set for this provider")
-    payload = {"model": provider["model"], "messages": messages, "temperature": 0.2, "max_tokens": max_tokens}
+    from . import redaction
+    outbound = redaction.messages(messages) if redaction.is_cloud(provider.get("base_url", "")) else messages
+    payload = {"model": provider["model"], "messages": outbound, "temperature": 0.2, "max_tokens": max_tokens}
     if tool_specs:
         payload["tools"] = tool_specs
         payload["tool_choice"] = "auto"
@@ -580,7 +582,11 @@ def investigate_steps(conn, provider: dict, history: list[dict], actor: str, tz_
 
 def active_provider(conn) -> dict | None:
     row = conn.execute("SELECT * FROM ai_providers WHERE is_active = 1 LIMIT 1").fetchone()
-    return dict(row) if row else None
+    if not row:
+        return None
+    from .db import DATA_DIR
+    from .secrets_store import decrypt
+    return {**dict(row), "api_key": decrypt(row["api_key"], DATA_DIR)}
 
 
 def incident_prompt(incident: dict) -> str:

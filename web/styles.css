@@ -1495,3 +1495,11 @@ a.ip-link:hover { color: var(--accent); }
 li.pb-step > span { display: inline-block; margin-bottom: 6px; }
 .pb-step .act-text b { font-weight: 600; }
 @media (max-width: 640px) { .act-row { flex-direction: column; align-items: stretch; } .act-do { justify-content: flex-end; } }
+
+
+/* ---------- asset register & suppression ---------- */
+.asset-row select { max-width: 130px; }
+.asset-row[data-href] { cursor: default; }
+.supp-rule { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.supp-rule code { font-size: 12px; }
+.supp h3 { font-size: 14px; }

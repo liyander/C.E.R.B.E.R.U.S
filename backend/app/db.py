@@ -256,7 +256,13 @@ def init_db() -> None:
         from .alerting import SCHEMA as ALERT_SCHEMA
         conn.executescript(ALERT_SCHEMA)
         conn.executescript(NOTES_SCHEMA)
+        from .intel import SCHEMA as INTEL_SCHEMA
+        conn.executescript(INTEL_SCHEMA)
+        from .login_detection import SCHEMA as LOGIN_SCHEMA
+        conn.executescript(LOGIN_SCHEMA)
         _migrate(conn)
+        from . import secrets_store
+        secrets_store.migrate(conn, DATA_DIR)
 
 
 # Columns added after v0.1; applied to databases created by older versions.
@@ -265,6 +271,8 @@ USER_COLUMNS = {
     "email_verified": "INTEGER NOT NULL DEFAULT 0",
     "disabled": "INTEGER NOT NULL DEFAULT 0",
     "last_login": "TEXT NOT NULL DEFAULT ''",
+    "mfa_secret": "TEXT NOT NULL DEFAULT ''",
+    "mfa_pending": "TEXT NOT NULL DEFAULT ''",
 }
 
 
@@ -314,6 +322,10 @@ def _migrate(conn) -> None:
     for name, ddl in (("incident_id", "INTEGER"), ("undo_command", "TEXT NOT NULL DEFAULT ''"), ("action", "TEXT NOT NULL DEFAULT ''")):
         if name not in cmd:
             conn.execute(f"ALTER TABLE server_commands ADD COLUMN {name} {ddl}")
+    ast = {row["name"] for row in conn.execute("PRAGMA table_info(assets)")}
+    for name, ddl in (("owner", "TEXT NOT NULL DEFAULT ''"), ("notes", "TEXT NOT NULL DEFAULT ''"), ("exposure", "TEXT NOT NULL DEFAULT ''")):
+        if name not in ast:
+            conn.execute(f"ALTER TABLE assets ADD COLUMN {name} {ddl}")
     # The single v0.1 "enforcer" account becomes the first admin and is trusted as verified.
     conn.execute("UPDATE users SET role = 'admin', email_verified = 1 WHERE role = 'enforcer'")
 
@@ -333,14 +345,19 @@ def set_setting(conn, key: str, value: str) -> None:
 
 def get_integration(conn, key: str) -> dict:
     row = conn.execute("SELECT config FROM integrations WHERE key = ?", (key,)).fetchone()
-    return json.loads(row["config"]) if row else {}
+    if not row:
+        return {}
+    from .secrets_store import transform_config
+    return transform_config(json.loads(row["config"]), DATA_DIR, reveal=True)
 
 
 def set_integration(conn, key: str, config: dict) -> None:
+    from .secrets_store import transform_config
+    protected = transform_config(config, DATA_DIR, reveal=False)
     conn.execute(
         "INSERT INTO integrations (key, config, updated_at) VALUES (?, ?, ?) "
         "ON CONFLICT(key) DO UPDATE SET config = excluded.config, updated_at = excluded.updated_at",
-        (key, json.dumps(config), now()),
+        (key, json.dumps(protected), now()),
     )
 
 

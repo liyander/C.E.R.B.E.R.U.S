@@ -3,7 +3,7 @@ user management, email settings, announcements and in-app notifications."""
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from . import auth, mailer
+from . import auth, mailer, mfa
 from .db import audit, db, now, set_integration
 
 # Status for "a system CERBERUS depends on failed" (the AI model, Grafana, Wazuh, the mail server).
@@ -31,6 +31,7 @@ class SetupBody(BaseModel):
 class LoginBody(BaseModel):
     username: str = Field(max_length=200)
     password: str = Field(max_length=200)
+    code: str = Field(default="", max_length=6)
 
 
 class ForgotBody(BaseModel):
@@ -176,8 +177,56 @@ def auth_login(body: LoginBody, request: Request, response: Response):
         if not user["email_verified"]:
             raise HTTPException(403, "Verify your email address first: use the link we emailed you, "
                                      "or ask an admin to send a new one.")
+        if user["mfa_secret"]:
+            if not mfa.verify(mfa.read(user["mfa_secret"]), body.code):
+                auth.throttle(f"mfa:{client_ip(request)}:{user['id']}", limit=10, seconds=300)
+                audit(conn, user["username"], "auth.mfa_failed", {"client": client_ip(request)})
+                raise HTTPException(401, "Authenticator code required or invalid")
         audit(conn, user["username"], "auth.login", {"client": client_ip(request)})
         set_cookie(request, response, auth.create_session(conn, user["id"]))
+    return {"ok": True}
+
+
+@router.get("/account/mfa")
+def mfa_status(user=User):
+    with db() as conn:
+        row = conn.execute("SELECT mfa_secret FROM users WHERE id=?", (user["id"],)).fetchone()
+    return {"enabled": bool(row["mfa_secret"])}
+
+
+@router.post("/account/mfa/setup")
+def mfa_setup(user=User):
+    with db() as conn:
+        row = conn.execute("SELECT mfa_secret FROM users WHERE id=?", (user["id"],)).fetchone()
+        if row["mfa_secret"]:
+            raise HTTPException(409, "MFA is already enabled")
+        secret = mfa.new_secret()
+        conn.execute("UPDATE users SET mfa_pending=? WHERE id=?", (mfa.protected(secret), user["id"]))
+    return {"secret": secret, "uri": mfa.uri(user["username"], secret)}
+
+
+@router.post("/account/mfa/enable")
+def mfa_enable(body: dict, user=User):
+    with db() as conn:
+        row = conn.execute("SELECT mfa_pending FROM users WHERE id=?", (user["id"],)).fetchone()
+        secret = mfa.read(row["mfa_pending"]) if row["mfa_pending"] else ""
+        if not secret or not mfa.verify(secret, str(body.get("code", ""))):
+            raise HTTPException(400, "Invalid authenticator code")
+        conn.execute("UPDATE users SET mfa_secret=mfa_pending, mfa_pending='' WHERE id=?", (user["id"],))
+        audit(conn, user["username"], "auth.mfa_enabled")
+    return {"ok": True}
+
+
+@router.post("/account/mfa/disable")
+def mfa_disable(body: dict, user=User):
+    with db() as conn:
+        row = conn.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+        if not row["mfa_secret"]:
+            raise HTTPException(409, "MFA is not enabled")
+        if not auth.check_password(row, str(body.get("password", ""))) or not mfa.verify(mfa.read(row["mfa_secret"]), str(body.get("code", ""))):
+            raise HTTPException(401, "Password or authenticator code is incorrect")
+        conn.execute("UPDATE users SET mfa_secret='', mfa_pending='' WHERE id=?", (user["id"],))
+        audit(conn, user["username"], "auth.mfa_disabled")
     return {"ok": True}
 
 
@@ -279,7 +328,8 @@ def account_password(body: PasswordChange, request: Request, response: Response,
 def _public_user(row) -> dict:
     return {"id": row["id"], "username": row["username"], "email": row["email"], "role": row["role"],
             "email_verified": bool(row["email_verified"]), "disabled": bool(row["disabled"]),
-            "has_password": bool(row["pw_hash"]), "created_at": row["created_at"], "last_login": row["last_login"]}
+            "has_password": bool(row["pw_hash"]), "has_mfa": bool(row["mfa_secret"]),
+            "created_at": row["created_at"], "last_login": row["last_login"]}
 
 
 @router.get("/users")
@@ -287,6 +337,20 @@ def users_list(admin=Admin):
     with db() as conn:
         return {"users": [_public_user(r) for r in conn.execute("SELECT * FROM users ORDER BY role, username")],
                 "email_configured": mailer.is_configured(mailer.config(conn))}
+
+
+@router.post("/users/{user_id}/reset-mfa")
+def users_reset_mfa(user_id: int, admin=Admin):
+    if user_id == admin["id"]:
+        raise HTTPException(400, "Use your account page to disable your own MFA")
+    with db() as conn:
+        row = _user_or_404(conn, user_id)
+        if not row["mfa_secret"]:
+            raise HTTPException(409, "MFA is not enabled for this account")
+        conn.execute("UPDATE users SET mfa_secret='', mfa_pending='' WHERE id=?", (user_id,))
+        conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+        audit(conn, admin["username"], "auth.mfa_reset", {"user_id": user_id, "username": row["username"]})
+    return {"ok": True}
 
 
 @router.post("/users")

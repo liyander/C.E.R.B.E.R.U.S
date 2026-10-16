@@ -6,7 +6,37 @@ incidents, it is not the mechanism that creates them.
 import json
 from datetime import datetime, timedelta, timezone
 
-from .db import ago, iso, now, parse_ts
+from .db import ago, get_integration, iso, now, parse_ts
+
+# Noise-suppression rules (set when an analyst marks something as a false positive), cached briefly.
+_suppress_cache: tuple[float, list] = (0.0, [])
+
+
+def suppressions(conn) -> list[dict]:
+    global _suppress_cache
+    import time as _t
+    if _t.monotonic() - _suppress_cache[0] < 30:
+        return _suppress_cache[1]
+    rules = get_integration(conn, "suppressions").get("rules", [])
+    _suppress_cache = (_t.monotonic(), rules)
+    return rules
+
+
+def invalidate_suppressions() -> None:
+    global _suppress_cache
+    _suppress_cache = (0.0, [])
+
+
+def matches_suppression(rule_id: str, title: str, rules: list[dict]) -> dict | None:
+    t = (title or "").lower()
+    for r in rules:
+        if not r.get("enabled", True):
+            continue
+        if r["field"] == "rule_id" and rule_id and rule_id == r["value"]:
+            return r
+        if r["field"] == "title_contains" and r["value"] and r["value"].lower() in t:
+            return r
+    return None
 
 CORRELATION_WINDOW_MINUTES = 60
 INCIDENT_MIN_SEVERITY = 4
@@ -123,6 +153,12 @@ def _correlate(conn, asset_id, source_ip, rule_id, event_type, severity, ts, tit
         "event_count, demo) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
         (title, severity, asset_id, source_ip, rule_id, ts, ts, int(demo)),
     )
+    # Noise suppression: if this matches a rule an analyst created, resolve it immediately.
+    if not demo:
+        hit = matches_suppression(rule_id, title, suppressions(conn))
+        if hit:
+            conn.execute("UPDATE incidents SET status = 'resolved', ai_verdict = 'noise', resolved_at = ?, close_reason = ? WHERE id = ?",
+                         (now(), f"Suppressed by noise rule: {hit.get('label') or hit['value']}", cur.lastrowid))
     return cur.lastrowid
 
 

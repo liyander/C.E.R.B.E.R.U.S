@@ -13,8 +13,9 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import accounts, ai, alerting, apps, auth, dashboard, demo, detections, grafana, insights, openappsec, patches, predict, remote, reports, response, triage, mailer, store, tools, watch, wazuh
-from .db import ROOT, audit, db, get_integration, get_setting, init_db, now, set_integration, set_setting
+from . import accounts, ai, alerting, apps, auth, dashboard, demo, detections, grafana, insights, intel, incident_ops, openappsec, patches, predict, remote, reports, response, triage, mailer, store, tools, watch, wazuh
+from .db import DATA_DIR, ROOT, audit, db, get_integration, get_setting, init_db, now, set_integration, set_setting
+from .secrets_store import decrypt, encrypt
 
 WEB_DIR = ROOT / "web"
 VERSION = "0.2.0"
@@ -531,6 +532,33 @@ def insight_page(name: str, request: Request, user=User):
         return view(conn, {k: str(v)[:200] for k, v in request.query_params.items()})
 
 
+@app.get("/api/v1/intel/{ip}")
+def intel_lookup(ip: str, refresh: bool = False, user=User):
+    import ipaddress
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        raise HTTPException(400, "Not an IP address")
+    with db() as conn:
+        if not intel.enabled(conn):
+            raise HTTPException(400, "No threat-intel source is enabled (Integrations).")
+        return intel.lookup(conn, ip, force=refresh)
+
+
+@app.get("/api/v1/integrations/intel")
+def intel_settings(user=Admin):
+    with db() as conn:
+        return intel.public_view(conn)
+
+
+@app.put("/api/v1/integrations/intel")
+def intel_settings_save(body: dict = Body(...), user=Admin):
+    with db() as conn:
+        saved = intel.save_settings(conn, body, user["username"])
+        audit(conn, user["username"], "integration.intel", {"greynoise": saved["greynoise_enabled"], "abuseipdb": saved["abuseipdb_enabled"]})
+        return saved
+
+
 @app.get("/api/v1/integrations/detections")
 def detections_get(user=Admin):
     with db() as conn:
@@ -794,6 +822,27 @@ def incident_detail(incident_id: int, user=User):
     return inc
 
 
+@app.post("/api/v1/incidents/{incident_id}/merge")
+def incident_merge(incident_id: int, body: dict = Body(...), user=User):
+    try:
+        with db() as conn:
+            return incident_ops.merge(conn, incident_id, int(body.get("source_id", 0)), user["username"])
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post("/api/v1/incidents/{incident_id}/split")
+def incident_split(incident_id: int, body: dict = Body(...), user=User):
+    ids = body.get("event_ids")
+    if not isinstance(ids, list) or any(type(i) is not int or i <= 0 for i in ids):
+        raise HTTPException(400, "event_ids must be a list of positive event IDs")
+    try:
+        with db() as conn:
+            return incident_ops.split(conn, incident_id, ids, user["username"])
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
 @app.patch("/api/v1/incidents/{incident_id}")
 def incident_update(incident_id: int, body: IncidentPatch, user=User):
     with db() as conn:
@@ -894,6 +943,37 @@ def incident_triage(incident_id: int, user=User):
     return verdict or {"error": "nothing to triage"}
 
 
+@app.post("/api/v1/incidents/{incident_id}/suppress")
+def incident_suppress(incident_id: int, body: dict = Body(...), user=Admin):
+    with db() as conn:
+        try:
+            return triage.suppress_from_incident(conn, incident_id, str(body.get("by", "title")), user["username"])
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
+
+@app.get("/api/v1/suppressions")
+def suppressions_list(user=Admin):
+    with db() as conn:
+        return triage.suppressions(conn)
+
+
+@app.post("/api/v1/suppressions")
+def suppressions_add(body: dict = Body(...), user=Admin):
+    with db() as conn:
+        try:
+            return triage.add_suppression(conn, str(body.get("field", "")), str(body.get("value", "")), str(body.get("label", "")), user["username"])
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
+
+@app.delete("/api/v1/suppressions/{rule_id}")
+def suppressions_delete(rule_id: str, user=Admin):
+    with db() as conn:
+        triage.delete_suppression(conn, rule_id, user["username"])
+        return {"ok": True}
+
+
 @app.get("/api/v1/triage/settings")
 def triage_settings(user=Admin):
     with db() as conn:
@@ -915,6 +995,33 @@ def list_assets(user=User):
             "(SELECT COUNT(*) FROM incidents i WHERE i.asset_id = a.id AND i.status IN ('open','investigating')) "
             "AS open_incidents FROM assets a ORDER BY open_incidents DESC, a.name").fetchall()
         return [dict(r) for r in rows]
+
+
+@app.patch("/api/v1/assets/{asset_id}")
+def asset_update(asset_id: int, body: dict = Body(...), user=Admin):
+    """Set importance, owner, notes, kind or exposure. Importance feeds incident priority."""
+    fields, params = [], []
+    crit = body.get("criticality")
+    if crit in ("critical", "high", "medium", "low"):
+        fields.append("criticality = ?"); params.append(crit)
+    if "owner" in body:
+        fields.append("owner = ?"); params.append(str(body["owner"])[:120])
+    if "notes" in body:
+        fields.append("notes = ?"); params.append(str(body["notes"])[:1000])
+    if body.get("kind"):
+        fields.append("kind = ?"); params.append(str(body["kind"])[:60])
+    if body.get("exposure") in ("internet-facing", "internal", ""):
+        fields.append("exposure = ?"); params.append(body.get("exposure"))
+    if not fields:
+        raise HTTPException(400, "Nothing to update")
+    with db() as conn:
+        cur = conn.execute(f"UPDATE assets SET {', '.join(fields)} WHERE id = ?", params + [asset_id])
+        if not cur.rowcount:
+            raise HTTPException(404, "Asset not found")
+        audit(conn, user["username"], "asset.update", {"asset_id": asset_id, **{k: body.get(k) for k in ("criticality", "owner", "kind", "exposure") if k in body}})
+        if crit:  # importance changed → re-rank this asset's open incidents
+            triage.rescore(conn)
+    return {"ok": True}
 
 
 @app.get("/api/v1/audit")
@@ -957,7 +1064,7 @@ def decide_approval(approval_id: int, body: DecisionBody, user=Admin):
 
 def _public_provider(row) -> dict:
     d = dict(row)
-    key = d.pop("api_key")
+    key = decrypt(d.pop("api_key"), DATA_DIR)
     d["has_key"] = bool(key)
     d["key_hint"] = f"…{key[-4:]}" if len(key) >= 12 else ""
     return d
@@ -967,7 +1074,7 @@ def _provider_or_404(conn, provider_id: int) -> dict:
     row = conn.execute("SELECT * FROM ai_providers WHERE id = ?", (provider_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Provider not found")
-    return dict(row)
+    return {**dict(row), "api_key": decrypt(row["api_key"], DATA_DIR)}
 
 
 @app.get("/api/v1/ai/providers")
@@ -984,7 +1091,7 @@ def providers_create(body: ProviderBody, user=Admin):
         cur = conn.execute(
             "INSERT INTO ai_providers (name, kind, base_url, api_key, model, is_active, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (body.name, body.kind, body.base_url.rstrip("/"), body.api_key.strip(), body.model.strip(),
+            (body.name, body.kind, body.base_url.rstrip("/"), encrypt(body.api_key.strip(), DATA_DIR), body.model.strip(),
              int(first), now()))
         audit(conn, user["username"], "ai.provider_created", {"name": body.name, "base_url": body.base_url})
         return {"id": cur.lastrowid}
@@ -998,7 +1105,7 @@ def providers_update(provider_id: int, body: ProviderBody, user=Admin):
         # A blank key keeps the stored one, but never carries it to a different host.
         key = body.api_key.strip() or (current["api_key"] if base_url == current["base_url"] else "")
         conn.execute("UPDATE ai_providers SET name = ?, kind = ?, base_url = ?, api_key = ?, model = ? WHERE id = ?",
-                     (body.name, body.kind, base_url, key, body.model.strip(), provider_id))
+                     (body.name, body.kind, base_url, encrypt(key, DATA_DIR), body.model.strip(), provider_id))
         audit(conn, user["username"], "ai.provider_updated", {"id": provider_id, "base_url": base_url})
     return {"ok": True}
 
@@ -1192,6 +1299,23 @@ def conversations_delete(conversation_id: int, user=User):
     with db() as conn:
         _conversation(conn, conversation_id, user)
         conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+    return {"ok": True}
+
+
+@app.post("/api/v1/ai/conversations/{conversation_id}/feedback")
+def conversation_feedback(conversation_id: int, body: dict = Body(...), user=User):
+    rating = body.get("rating")
+    index = body.get("index")
+    if rating not in ("up", "down") or type(index) is not int or index < 0:
+        raise HTTPException(400, "Choose an answer and a rating")
+    with db() as conn:
+        row = _conversation(conn, conversation_id, user)
+        messages = json.loads(row["messages"])
+        if index >= len(messages) or messages[index]["role"] != "assistant":
+            raise HTTPException(404, "Answer not found")
+        messages[index]["feedback"] = rating
+        _store_messages(conn, conversation_id, messages)
+        audit(conn, user["username"], "ai.feedback", {"conversation_id": conversation_id, "index": index, "rating": rating})
     return {"ok": True}
 
 

@@ -782,6 +782,8 @@
       ${proposed ? '<div class="callout" style="margin-top:10px">A response request is waiting for your decision. <a class="link" href="#/approvals">Open approvals</a></div>' : ''}
       ${trace.length ? `<details class="trace"><summary>${icon('tool', 13)} ${trace.length} evidence ${trace.length === 1 ? 'query' : 'queries'}</summary>${trace.map((t) => stepRow(t)).join('')}</details>` : ''}
       <div class="actions"><button class="btn sm ghost" data-action="chat-copy" data-index="${index}">${icon('copy', 14)} Copy</button>
+        ${state.chatId ? `<button class="btn sm ghost ${m.feedback === 'up' ? 'active' : ''}" data-action="chat-feedback" data-rating="up" data-index="${index}" aria-label="Helpful answer">👍</button>
+        <button class="btn sm ghost ${m.feedback === 'down' ? 'active' : ''}" data-action="chat-feedback" data-rating="down" data-index="${index}" aria-label="Unhelpful answer">👎</button>` : ''}
         ${state.emailReady && state.chatId ? `<button class="btn sm ghost" data-action="chat-report" data-index="${state.chat.slice(0, index).filter((x) => !x.error).length}" title="Email this answer to the admins as a report">${icon('mail', 14)} Email to admins</button>` : ''}</div>
     </div></div>`;
   }
@@ -982,8 +984,11 @@
           <select id="ac-days" name="auto_close_days">${[[0, 'Never'], [3, '3 days'], [7, '7 days'], [14, '14 days'], [30, '30 days']].map(([v, t]) => `<option value="${v}" ${Number(d.settings.auto_close_days) === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
           <div class="hint">Critical incidents (severity 9+) are never auto-closed.</div></div>
         <div class="row" style="margin-top:12px"><button class="btn primary">Save</button><span class="muted small">${d.settings.last_result ? `Last AI triage: ${esc(d.settings.last_result)}` : ''}</span></div>
-      </form></details>` : '';
-    return page('Queue', 'Incidents ranked by priority, with an AI verdict on each, so you work the most important first.', metrics,
+      </form>
+      <div class="supp" style="padding:4px 18px 16px"><h3 style="margin:8px 0">Noise suppression</h3>
+        <p class="muted small" style="margin:0 0 10px">Rules that auto-close matching incidents as noise. Add one from an incident ("Suppress as noise").</p>
+        <div id="supp-list" class="muted small">Loading…</div></div></details>` : '';
+    const html = page('Queue', 'Incidents ranked by priority, with an AI verdict on each, so you work the most important first.', metrics,
       `<div class="stats app-stats" style="--n:4">${tiles.map(appTile).join('')}</div>
       ${settings}
       <div class="q-filters"><div class="chips">${statusChips}</div><div class="chips">${verdictChips}</div></div>
@@ -991,7 +996,18 @@
         <tr><th data-sort="num">Priority</th><th data-sort="text">Incident</th><th data-sort="text">AI verdict</th><th data-sort="text">Status</th><th data-sort="text">Owner</th><th data-sort="num">Last seen</th></tr>
         ${rows}</table></div></div>`
         : empty('Nothing here', status === 'active' ? 'No open incidents in the queue.' : 'No incidents match this view.', '', 'check')}`);
+    return { html, mount: loadSuppressions };
   };
+  async function loadSuppressions() {
+    const slot = $('#supp-list');
+    if (!slot) return;
+    try {
+      const rules = await api('/suppressions');
+      slot.innerHTML = rules.length ? rules.map((r) => `<div class="supp-rule"><div><b>${esc(r.label || r.value)}</b> <span class="muted">· ${r.field === 'rule_id' ? 'rule' : 'title contains'} <code>${esc(r.value)}</code> · ${r.suppressed_count} closed</span></div>
+        <button class="btn sm ghost danger-text" data-action="supp-delete" data-id="${esc(r.id)}" data-label="${esc(r.label || r.value)}">${icon('trash', 13)}</button></div>`).join('')
+        : '<span class="muted">No suppression rules yet.</span>';
+    } catch { slot.textContent = ''; }
+  }
 
   views.incidents = async ({ id, params }) => {
     if (id) return incidentDetail(id);
@@ -1091,6 +1107,9 @@
       `<a class="btn" href="#/console?q=${encodeURIComponent(`Tell me about incident ${i.ref}`)}">${icon('chat')} Ask about it</a>
        <button class="btn" data-action="incident-triage" data-id="${i.id}">${icon('spark')} ${i.ai_verdict ? 'Re-triage' : 'Triage'}</button>
        <button class="btn" data-action="incident-closure" data-id="${i.id}">${icon('inbox')} Closure report</button>
+       ${isAdmin() ? `<button class="btn" data-action="incident-suppress" data-id="${i.id}" data-rule="${esc(i.rule_id || '')}">${icon('trash', 15)} Suppress as noise</button>` : ''}
+       <button class="btn" data-action="incident-merge" data-id="${i.id}">Merge into this</button>
+       ${i.events.length > 1 ? `<button class="btn" data-action="incident-split" data-id="${i.id}">Split events</button>` : ''}
        <button class="btn primary" data-action="investigate" data-id="${i.id}">${icon('spark')} ${i.summary ? 'Re-investigate' : 'Investigate with AI'}</button>`,
       `<div class="split">
         <div class="stack">
@@ -1923,14 +1942,23 @@
       ${h.query_errors.length ? `<div class="callout info">Some measurements were unavailable: ${esc(h.query_errors.join('; '))}</div>` : ''}`);
   };
 
+  const CRIT = [['critical', 'Critical'], ['high', 'High'], ['medium', 'Medium'], ['low', 'Low']];
+  const critBadge = (c) => `<span class="badge ${c === 'critical' ? 'critical' : c === 'high' ? 'high' : c === 'low' ? 'low' : 'medium'}">${esc(c || 'medium')}</span>`;
   views.assets = async () => {
     const assets = await api('/assets');
-    return page('Assets', 'Hosts and services seen in events. New names are added automatically on first sight.', '',
+    const admin = isAdmin();
+    const critCell = (a) => admin
+      ? `<select data-change="asset-crit" data-id="${a.id}" aria-label="Importance" onclick="event.stopPropagation()">${CRIT.map(([v, t]) => `<option value="${v}" ${(a.criticality || 'medium') === v ? 'selected' : ''}>${t}</option>`).join('')}</select>`
+      : critBadge(a.criticality);
+    return page('Assets', 'Your machines and services. Set each one\'s importance and owner — importance raises the priority of its incidents.', '',
       assets.length ? `<div class="card"><div class="table-scroll"><table>
-        <tr><th data-sort="text">Name</th><th data-sort="text">IP</th><th data-sort="text">Kind</th><th data-sort="text">Criticality</th><th data-sort="num">Open incidents</th><th data-sort="num">Events</th><th>Last event</th></tr>
-        ${assets.map((a) => `<tr class="clickable" data-href="#/events?q=${encodeURIComponent(a.name)}"><td><strong>${esc(a.name)}</strong>${demoBadge(a.demo)}</td>
-          <td class="mono">${esc(a.ip || '—')}</td><td>${esc(a.kind)}</td><td>${esc(a.criticality)}</td>
-          <td>${a.open_incidents ? `<span class="badge high">${a.open_incidents}</span>` : '<span class="muted">0</span>'}</td><td>${a.event_count}</td><td class="nowrap">${agoCell(a.last_event)}</td></tr>`).join('')}
+        <tr><th data-sort="text">Name</th><th data-sort="text">IP</th><th data-sort="text">Kind</th><th data-sort="text">Importance</th><th data-sort="text">Exposure</th><th data-sort="text">Owner</th><th data-sort="num">Open incidents</th><th data-sort="num">Events</th><th>Last event</th>${admin ? '<th></th>' : ''}</tr>
+        ${assets.map((a) => `<tr class="asset-row" data-asset="${a.id}"><td><strong>${esc(a.name)}</strong>${demoBadge(a.demo)}</td>
+          <td class="mono">${a.ip ? `<a class="link" href="#/ip?ip=${encodeURIComponent(a.ip)}" onclick="event.stopPropagation()">${esc(a.ip)}</a>` : '—'}</td><td>${esc(a.kind)}</td><td>${critCell(a)}</td>
+          <td>${a.exposure === 'internet-facing' ? '<span class="badge high">internet-facing</span>' : a.exposure === 'internal' ? '<span class="muted">internal</span>' : '<span class="muted small">—</span>'}</td>
+          <td>${esc(a.owner || '—')}</td>
+          <td>${a.open_incidents ? `<a class="badge high" href="#/queue?status=active" onclick="event.stopPropagation()">${a.open_incidents}</a>` : '<span class="muted">0</span>'}</td><td>${a.event_count}</td><td class="nowrap">${agoCell(a.last_event)}</td>
+          ${admin ? `<td class="nowrap"><button class="btn sm ghost" data-action="asset-edit" data-id="${a.id}" data-name="${esc(a.name)}" data-owner="${esc(a.owner || '')}" data-notes="${esc(a.notes || '')}" data-exposure="${esc(a.exposure || '')}">${icon('edit', 14)}</button></td>` : ''}</tr>`).join('')}
       </table></div></div>` : empty('No assets yet', 'Assets appear once events reference them.', '', 'server'));
   };
 
@@ -2008,9 +2036,9 @@
   }
 
   views.integrations = async () => {
-    const [data, mail, wz, oa, dt, fc] = await Promise.all([api('/integrations'), api('/integrations/email'), api('/integrations/wazuh'),
+    const [data, mail, wz, oa, dt, fc, intel] = await Promise.all([api('/integrations'), api('/integrations/email'), api('/integrations/wazuh'),
       api('/integrations/openappsec').catch(() => ({ assets: '', agents: '', ready: false, seen_agents: [] })), api('/integrations/detections').catch(() => null),
-      api('/integrations/forecast').catch(() => null)]);
+      api('/integrations/forecast').catch(() => null), api('/integrations/intel').catch(() => null)]);
     const z = wz.settings;
     const g = data.grafana;
     const m = mail.settings;
@@ -2075,6 +2103,7 @@
           </div>
           <div class="row"><button class="btn primary">Save</button><a class="btn" href="#/app/openappsec/assets">View protected assets</a></div>
         </form></div>
+      ${intel ? intelCard(intel) : ''}
       ${fc ? forecastCard(fc) : ''}
       ${dt ? detectionsCard(dt) : ''}
       <div class="card card-pad"><h2>Email ${mail.configured ? '<span class="badge ok">configured</span>' : ''}</h2>
@@ -2404,6 +2433,19 @@ Authorization: Bearer &lt;token&gt;
   }
 
   // Attack forecasting: early warnings from the patterns that come before an intrusion.
+  function intelCard(x) {
+    return `<div class="card card-pad"><h2>IP threat intelligence ${x.greynoise_enabled || (x.abuseipdb_enabled && x.has_abuseipdb_key) ? '<span class="badge ok">on</span>' : '<span class="badge">off</span>'}</h2>
+      <p class="muted" style="margin:6px 0 14px">Looks up external addresses against reputation sources, shown on the IP lookup page and used to rank incidents. Results are cached for 12 hours.</p>
+      <form data-form="intel">
+        <label class="check"><input type="checkbox" name="greynoise_enabled" ${x.greynoise_enabled ? 'checked' : ''}> GreyNoise Community — is an address an internet-wide scanner or a known benign service (no key needed)</label>
+        <label class="check" style="margin-top:10px"><input type="checkbox" name="abuseipdb_enabled" ${x.abuseipdb_enabled ? 'checked' : ''}> AbuseIPDB — abuse score, country and network owner (needs a free API key)</label>
+        <div class="field" style="margin-top:10px;max-width:460px"><label for="ab-key">AbuseIPDB API key</label>
+          <input id="ab-key" type="password" name="abuseipdb_key" autocomplete="off" placeholder="${x.has_abuseipdb_key ? 'Leave blank to keep the saved key' : 'From abuseipdb.com → Account → API'}">
+          <div class="hint">Free tier allows 1,000 checks/day. The key is stored locally and never shown again.</div></div>
+        <div class="row" style="margin-top:12px"><button class="btn primary">Save</button></div>
+      </form></div>`;
+  }
+
   function forecastCard(fc) {
     const s = fc.settings;
     const opt = (list, value) => list.map(([v, t]) => `<option value="${v}" ${String(v) === String(value) ? 'selected' : ''}>${t}</option>`).join('');
@@ -2512,6 +2554,7 @@ Authorization: Bearer &lt;token&gt;
           <div class="pop menu" hidden>
             ${item('user-email', u.email ? 'Change email address' : 'Add email address', 'mail')}
             ${item('user-password', mailOn && u.email ? 'Send password reset link' : 'Set a new password', 'retry', `data-mail="${mailOn && u.email ? '1' : ''}"`)}
+            ${!mine && u.has_mfa ? item('user-reset-mfa', 'Reset authenticator', 'retry') : ''}
             ${!u.email_verified && mailOn && u.email ? item('user-resend', 'Resend verification link', 'send') : ''}
             ${!u.email_verified ? item('user-verify', 'Mark as verified', 'check') : ''}
             ${mine ? '' : `<div class="menu-sep"></div>${item('user-toggle', u.disabled ? 'Enable account' : 'Disable account', u.disabled ? 'check' : 'stop', `data-disabled="${u.disabled ? '1' : ''}"`)}
@@ -2587,7 +2630,9 @@ Authorization: Bearer &lt;token&gt;
       </table></div></div>` : empty('No announcements yet', 'Anything you send appears here with how many people have read it.', '', 'megaphone')}`);
   };
 
-  views.account = async () => page('My account', '', '',
+  views.account = async () => {
+    const mfa = await api('/account/mfa');
+    return page('My account', '', '',
     `<div class="split">
       <div class="card card-pad"><h2>Change password</h2>
         <form data-form="password" style="margin-top:14px">
@@ -2602,7 +2647,10 @@ Authorization: Bearer &lt;token&gt;
         <dt>Email</dt><dd>${esc(state.user.email || 'not set')}</dd>
         <dt>Role</dt><dd>${roleName(state.user.role)}</dd></dl>
         <p class="muted small" style="margin:14px 0 0">An admin can change your email address or role under Users.</p></div>
+      <div class="card card-pad"><h2>Authenticator app</h2><p class="muted small">${mfa.enabled ? 'Two factor sign-in is enabled.' : 'Add an extra code to sign-in using an authenticator app.'}</p>
+        <button class="btn" data-action="${mfa.enabled ? 'mfa-disable' : 'mfa-setup'}">${mfa.enabled ? 'Disable' : 'Set up authenticator'}</button></div>
     </div>`);
+  };
 
   views.audit = async () => {
     const rows = await api('/audit');
@@ -2940,6 +2988,11 @@ Authorization: Bearer &lt;token&gt;
       await api(`/users/${el.dataset.id}`, { method: 'PUT', body: { password: answer.value } });
       toast('Password changed');
     },
+    async 'user-reset-mfa'(el) {
+      if (!await confirmDialog({ title: `Reset authenticator for ${el.dataset.name}?`, text: 'Their current sessions will end and they can set up a new authenticator after signing in.', ok: 'Reset', danger: true })) return;
+      await api(`/users/${el.dataset.id}/reset-mfa`, { method: 'POST' });
+      toast('Authenticator reset'); route({ soft: true });
+    },
     async 'user-toggle'(el) {
       const disable = !el.dataset.disabled;
       if (disable && !await confirmDialog({ title: `Disable ${el.dataset.name}?`, text: 'They are signed out immediately and cannot sign in until you enable the account again.', ok: 'Disable', danger: true })) return;
@@ -2958,6 +3011,13 @@ Authorization: Bearer &lt;token&gt;
       while (state.chat.length && state.chat[state.chat.length - 1].error) state.chat.pop();
       const last = state.chat[state.chat.length - 1];
       if (last && last.role === 'user') { state.chat.pop(); sendChat(last.content); } else renderChat();
+    },
+    async 'chat-feedback'(el) {
+      const index = Number(el.dataset.index);
+      await api(`/ai/conversations/${state.chatId}/feedback`, { method: 'POST', body: { index, rating: el.dataset.rating } });
+      state.chat[index].feedback = el.dataset.rating;
+      renderChat();
+      toast('Feedback saved');
     },
     async 'incident-respond'(el) {
       const row = el.closest('.act-do') || el.closest('.icmd-meta') || el.parentElement;
@@ -2984,6 +3044,27 @@ Authorization: Bearer &lt;token&gt;
       try { await api(`/incidents/${el.dataset.id}/closure`, { method: 'POST' }); toast('Closure report added'); route({ soft: true }); }
       catch (err) { toast(err.message); } finally { el.disabled = false; el.innerHTML = was; }
     },
+    async 'incident-suppress'(el) {
+      const byRule = !!el.dataset.rule;
+      const a = await confirmDialog({ title: 'Suppress similar incidents as noise?',
+        text: byRule ? 'Future incidents from the same rule will auto-close as noise, and matching open ones close now. You can undo this on the Queue page.'
+          : 'Future incidents with a similar title will auto-close as noise, and matching open ones close now.', ok: 'Suppress', danger: true });
+      if (!a) return;
+      try { const r = await api(`/incidents/${el.dataset.id}/suppress`, { method: 'POST', body: { by: byRule ? 'rule' : 'title' } });
+        toast(`Suppression added — ${r.closed} matching incident${r.closed === 1 ? '' : 's'} closed`); location.hash = '#/queue'; }
+      catch (err) { toast(err.message); }
+    },
+    async 'supp-delete'(el) {
+      if (!await confirmDialog({ title: `Remove suppression "${el.dataset.label}"?`, text: 'New matching incidents will no longer auto-close. Already-closed ones stay closed.', ok: 'Remove', danger: true })) return;
+      await api(`/suppressions/${el.dataset.id}`, { method: 'DELETE' }); toast('Suppression removed'); route({ soft: true });
+    },
+    async 'asset-edit'(el) {
+      const a = await confirmDialog({ title: `Edit ${el.dataset.name}`, text: 'Owner (who looks after it) and notes. Importance is set in the table.',
+        input: el.dataset.owner, note: el.dataset.notes, ok: 'Save' });
+      if (!a) return;
+      await api(`/assets/${el.dataset.id}`, { method: 'PATCH', body: { owner: a.value, notes: a.note } });
+      toast('Asset updated'); route({ soft: true });
+    },
     async 'incident-triage'(el) {
       el.disabled = true; const was = el.innerHTML; el.innerHTML = '<span class="spinner"></span> Triaging';
       try { const v = await api(`/incidents/${el.dataset.id}/triage`, { method: 'POST' }); toast(v && v.verdict ? `Verdict: ${v.verdict}` : 'Triaged'); route({ soft: true }); }
@@ -2993,6 +3074,38 @@ Authorization: Bearer &lt;token&gt;
       const a = await confirmDialog({ title: 'Add a note', text: 'Visible to the team on this incident.', ok: 'Add note', note: true });
       if (!a || !a.note.trim()) return;
       await api(`/incidents/${el.dataset.id}/note`, { method: 'POST', body: { body: a.note } }); toast('Note added'); route({ soft: true });
+    },
+    async 'mfa-setup'() {
+      const r = await api('/account/mfa/setup', { method: 'POST' });
+      const a = await confirmDialog({ title: 'Set up authenticator', text: `Add this secret to your authenticator app: ${r.secret}. Then enter its current six digit code.`, input: '', ok: 'Enable' });
+      if (!a) return;
+      await api('/account/mfa/enable', { method: 'POST', body: { code: String(a.value || '').trim() } });
+      toast('Authenticator enabled'); route({ soft: true });
+    },
+    async 'mfa-disable'() {
+      const password = await confirmDialog({ title: 'Disable authenticator', text: 'Enter your password.', input: '', ok: 'Next' });
+      if (!password) return;
+      const code = await confirmDialog({ title: 'Disable authenticator', text: 'Enter the current six digit code.', input: '', ok: 'Disable' });
+      if (!code) return;
+      await api('/account/mfa/disable', { method: 'POST', body: { password: password.value, code: String(code.value || '').trim() } });
+      toast('Authenticator disabled'); route({ soft: true });
+    },
+    async 'incident-merge'(el) {
+      const a = await confirmDialog({ title: 'Merge incidents', text: `Enter the source incident number to move its events into INC-${String(el.dataset.id).padStart(4, '0')}. Its notes and approvals remain on the source case.`, input: '', ok: 'Merge' });
+      if (!a) return;
+      const source_id = Number(String(a.value || '').replace(/^INC-/i, ''));
+      if (!Number.isSafeInteger(source_id) || source_id <= 0) { toast('Enter a valid incident number'); return; }
+      try { await api(`/incidents/${el.dataset.id}/merge`, { method: 'POST', body: { source_id } }); toast('Incidents merged'); route({ soft: true }); }
+      catch (err) { toast(err.message); }
+    },
+    async 'incident-split'(el) {
+      const a = await confirmDialog({ title: 'Split events', text: 'Enter event numbers separated by commas (for example EVT-12, EVT-13). Leave at least one event in this incident.', input: '', ok: 'Split' });
+      if (!a) return;
+      const parts = String(a.value || '').split(',').map((v) => v.trim().replace(/^EVT-/i, ''));
+      const event_ids = parts.map(Number);
+      if (!parts.length || event_ids.some((n) => !Number.isSafeInteger(n) || n <= 0)) { toast('Enter valid event numbers'); return; }
+      try { const r = await api(`/incidents/${el.dataset.id}/split`, { method: 'POST', body: { event_ids } }); toast('New incident created'); location.hash = `#/incidents/${r.incident_id}`; }
+      catch (err) { toast(err.message); }
     },
     async investigate(el) {
       el.disabled = true;
@@ -3249,7 +3362,7 @@ Authorization: Bearer &lt;token&gt;
       await api('/account/password', { method: 'PUT', body: { current: f.current.value, new: f.password.value } });
       toast('Password changed'); route();
     },
-    async login(f) { await api('/auth/login', { method: 'POST', body: { username: f.username.value.trim(), password: f.password.value } }); boot(); },
+    async login(f) { await api('/auth/login', { method: 'POST', body: { username: f.username.value.trim(), password: f.password.value, code: f.code.value.trim() } }); boot(); },
     async setup(f) {
       if (f.password.value !== f.confirm.value) throw new Error('The two passwords do not match');
       await api('/auth/setup', { method: 'POST', body: { username: f.username.value.trim(), email: f.email.value.trim(), password: f.password.value } }); boot();
@@ -3271,6 +3384,10 @@ Authorization: Bearer &lt;token&gt;
   };
 
   const changes = {
+    async 'asset-crit'(el) {
+      await api(`/assets/${el.dataset.id}`, { method: 'PATCH', body: { criticality: el.value } });
+      toast('Importance updated — incident priorities recalculated');
+    },
     async 'incident-status'(el) {
       let reason = '';
       if (['resolved', 'false_positive'].includes(el.value)) {
@@ -3595,6 +3712,7 @@ Authorization: Bearer &lt;token&gt;
       ${setup ? '<div class="field"><label for="a-mail">Email address</label><input id="a-mail" type="text" name="email" autocomplete="email"><div class="hint">Optional now, but needed to receive reports and reset your own password.</div></div>' : ''}
       <div class="field"><label for="a-pass">Password</label><input id="a-pass" type="password" name="password" required ${setup ? 'minlength="10"' : ''} autocomplete="${setup ? 'new-password' : 'current-password'}">
         ${setup ? '<div class="hint">At least 10 characters.</div>' : ''}</div>
+      ${setup ? '' : '<div class="field"><label for="a-code">Authenticator code (if enabled)</label><input id="a-code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></div>'}
       ${setup ? '<div class="field"><label for="a-conf">Confirm password</label><input id="a-conf" type="password" name="confirm" required autocomplete="new-password"></div>' : ''}
       ${setup ? '' : '<div class="auth-links auth-row"><span>Accounts are created by your admin</span><a class="link" href="#/forgot">Forgot password?</a></div>'}
       <div class="form-error"></div>

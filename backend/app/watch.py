@@ -388,8 +388,8 @@ def _tick() -> None:
 def _loop() -> None:
     while True:
         time.sleep(POLL_SECONDS)
-        from . import alerting, dashboard, detections, patches, predict, reports, triage
-        for job in (wazuh.tick, detections.tick, predict.tick, triage.tick, alerting.tick, dashboard.tick, patches.tick, reports.tick, _tick):
+        from . import alerting, backups, dashboard, detections, login_detection, patches, predict, reports, triage
+        for job in (backups.tick, wazuh.tick, detections.tick, login_detection.tick, predict.tick, triage.tick, alerting.tick, dashboard.tick, patches.tick, reports.tick, _tick):
             try:
                 job()
             except Exception:  # the scheduler must survive any single bad pass

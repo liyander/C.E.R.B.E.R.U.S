@@ -12,6 +12,8 @@ Nothing here acts on a server; response actions that touch a machine go through 
 import json
 import logging
 import math
+import re
+import secrets
 import threading
 from datetime import datetime, timedelta, timezone
 
@@ -48,7 +50,7 @@ def _context(conn):
     return {"by_ip": by_ip, "by_name": by_name, "forecasts": forecasts}
 
 
-def score(inc: dict, ctx: dict) -> tuple[int, dict]:
+def score(inc: dict, ctx: dict, rep: dict | None = None) -> tuple[int, dict]:
     """Priority 0-100 and how it was made up. Severity is the base; the rest raises it."""
     sev = inc["severity"]
     base = sev / 10 * 55
@@ -63,6 +65,14 @@ def score(inc: dict, ctx: dict) -> tuple[int, dict]:
     fc = ctx["forecasts"].get((inc.get("asset_name") or "").lower()) or (ctx["forecasts"].get(inc.get("source_ip") or "") if inc.get("source_ip") else 0)
     if fc:
         parts["Attack forecast"] = round(fc / 100 * 12, 1)
+    if rep and rep.get("verdict"):
+        tone = rep["verdict"].get("tone")
+        if tone == "critical":
+            parts["Bad reputation"] = 10.0
+        elif tone == "high":
+            parts["Scanner reputation"] = 4.0
+        elif tone == "low" and rep.get("verdict", {}).get("label") == "Known benign":
+            parts["Known-benign source"] = -8.0
     verdict = inc.get("ai_verdict") or ""
     # The AI verdict mostly scales the whole score down for noise, up a little for a confirmed attack.
     weight = VERDICT_WEIGHT.get(verdict, 0.5)
@@ -88,9 +98,11 @@ def rescore(conn, incident_id: int | None = None, ctx: dict | None = None) -> in
     rows = conn.execute("SELECT i.*, a.name AS asset_name, a.ip AS asset_ip, a.criticality FROM incidents i "
                         f"LEFT JOIN assets a ON a.id = i.asset_id WHERE {where}", params).fetchall()
     n = 0
+    from . import intel
     for r in rows:
         inc = dict(r)
-        value, meta = score(inc, ctx)
+        rep = intel.cached(conn, inc["source_ip"]) if inc.get("source_ip") and insights.is_public(inc["source_ip"]) else None
+        value, meta = score(inc, ctx, rep)
         due = inc["due_at"]
         if inc["status"] in OPEN and (not due or incident_id):
             try:
@@ -114,6 +126,10 @@ def _facts(conn, incident_id: int) -> str:
     ip_note = ""
     if inc.get("source_ip"):
         ip_note = f"\nSource address {inc['source_ip']} is {'an internet' if insights.is_public(inc['source_ip']) else 'an internal'} address."
+        from . import intel
+        rep = intel.cached(conn, inc["source_ip"])
+        if rep and rep.get("verdict"):
+            ip_note += f" Threat intel: {rep['verdict']['label']} — {rep['verdict']['text']}"
     slim = {"ref": inc["ref"], "title": inc["title"], "severity": f"{inc['severity']} ({inc['severity_label']})",
             "asset": inc.get("asset_name") or inc.get("asset_ip") or "unknown", "source_ip": inc.get("source_ip", ""),
             "events": inc["event_count"], "first_seen": inc["first_seen"], "last_seen": inc["last_seen"],
@@ -312,6 +328,65 @@ def tick() -> None:
                 set_setting(conn, "triage_rescore_at", now())
     finally:
         _lock.release()
+
+
+# ---------- noise suppression ----------
+
+def suppressions(conn) -> list[dict]:
+    rules = store.suppressions(conn)
+    out = []
+    for r in rules:
+        n = conn.execute("SELECT COUNT(*) FROM incidents WHERE close_reason LIKE ? AND demo = 0",
+                         (f"Suppressed by noise rule: {r.get('label') or r['value']}%",)).fetchone()[0]
+        out.append({**r, "suppressed_count": n})
+    return out
+
+
+def add_suppression(conn, field: str, value: str, label: str, actor: str) -> dict:
+    from .db import set_integration
+    if field not in ("rule_id", "title_contains"):
+        raise ValueError("Unknown match type")
+    value = (value or "").strip()
+    if not value:
+        raise ValueError("Nothing to match on")
+    rules = store.suppressions(conn)
+    rule = {"id": secrets.token_hex(5), "field": field, "value": value[:200], "label": (label or value)[:120], "enabled": True, "created_by": actor, "created_at": now()}
+    set_integration(conn, "suppressions", {"rules": rules + [rule]})
+    store.invalidate_suppressions()
+    swept = _sweep_suppression(conn, rule)
+    audit(conn, actor, "suppression.add", {"field": field, "value": value, "closed": swept})
+    return {"rule": rule, "closed": swept}
+
+
+def delete_suppression(conn, rule_id: str, actor: str) -> None:
+    from .db import set_integration
+    set_integration(conn, "suppressions", {"rules": [r for r in store.suppressions(conn) if r["id"] != rule_id]})
+    store.invalidate_suppressions()
+    audit(conn, actor, "suppression.delete", {"id": rule_id})
+
+
+def _sweep_suppression(conn, rule: dict) -> int:
+    """Close the open incidents that already match a new suppression rule."""
+    reason = f"Suppressed by noise rule: {rule.get('label') or rule['value']}"
+    rows = conn.execute("SELECT id, rule_id, title FROM incidents WHERE status IN ('open', 'investigating') AND demo = 0").fetchall()
+    n = 0
+    for r in rows:
+        if store.matches_suppression(r["rule_id"], r["title"], [rule]):
+            conn.execute("UPDATE incidents SET status = 'resolved', ai_verdict = 'noise', resolved_at = ?, close_reason = ? WHERE id = ?", (now(), reason, r["id"]))
+            _note(conn, r["id"], "status", "CERBERUS", f"Auto-closed as noise ({rule.get('label') or rule['value']}).")
+            n += 1
+    return n
+
+
+def suppress_from_incident(conn, incident_id: int, by: str, actor: str) -> dict:
+    row = conn.execute("SELECT rule_id, title FROM incidents WHERE id = ?", (incident_id,)).fetchone()
+    if not row:
+        raise ValueError("No such incident")
+    if by == "rule" and row["rule_id"]:
+        return add_suppression(conn, "rule_id", row["rule_id"], f"Rule {row['rule_id']}", actor)
+    # Fall back to the leading phrase of the title (before any count/qualifier).
+    phrase = re.split(r"[(:]| from | against | on ", row["title"])[0].strip()[:80]
+    return add_suppression(conn, "title_contains", phrase, phrase, actor)
 
 
 def settings(conn) -> dict:

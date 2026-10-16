@@ -156,13 +156,38 @@ def ip_profile(conn, q: dict) -> dict:
     accepted = [k for k in logins if k[2] == "accepted"]
     times = [t["time"] for t in timeline if t.get("time")]
     kind = "External" if is_public(ip) else "Internal"
+    # Threat-intel reputation (external addresses only), cached 12h.
+    rep = None
+    if kind == "External":
+        try:
+            from . import intel
+            if intel.enabled(conn):
+                rep = intel.lookup(conn, ip)
+        except Exception as exc:  # enrichment must never break the page
+            problems.append(f"Reputation: {str(exc)[:80]}")
+    rep_block = []
+    rep_tile = None
+    if rep and rep.get("verdict"):
+        v = rep["verdict"]
+        gn, ab = rep.get("greynoise") or {}, rep.get("abuseipdb") or {}
+        rep_tile = tile("Reputation", v["label"], v["tone"])
+        rows = []
+        if ab:
+            rows += [{"k": "AbuseIPDB score", "v": f"{ab.get('score', 0)}/100 ({ab.get('total_reports', 0)} reports)"},
+                     {"k": "Country / network", "v": " · ".join(filter(None, [ab.get("country"), ab.get("isp"), ab.get("usage")]))},
+                     {"k": "Last reported", "v": ab.get("last_reported", "") or "—"}]
+        if gn:
+            rows += [{"k": "GreyNoise", "v": (gn.get("classification") or ("benign service (RIOT)" if gn.get("riot") else "internet scanner" if gn.get("noise") else "seen" if gn.get("seen") else "not seen")) + (f" — {gn['name']}" if gn.get("name") else "")}]
+        rep_block = [table(f"Reputation · {v['label']}", (("k", "Source", "text"), ("v", "Finding", "wrap")), rows,
+                           note=v["text"] + (" Cached." if rep.get("cached") else "") + ("  Could not reach: " + "; ".join(rep["errors"]) if rep.get("errors") else ""),
+                           empty="No reputation data for this address.")]
     return {
         "title": f"IP {ip}", "subtitle": "Everything the connected sources have recorded about this address. Ask the AI for a verdict.",
         "filters": filters,
         "tiles": [tile("Address", kind, "high" if kind == "External" and timeline else ""), tile("Seen by sources", len(per_source), "critical" if len(per_source) >= 3 else "high" if len(per_source) == 2 else ""),
                   tile("Sightings", sum(per_source.values())),
-                  tile("Successful logins", sum(logins[k]["count"] for k in accepted), "critical" if accepted and is_public(ip) else "")],
-        "blocks": [
+                  rep_tile or tile("Successful logins", sum(logins[k]["count"] for k in accepted), "critical" if accepted and is_public(ip) else "")],
+        "blocks": rep_block + [
             bars("Sightings by source", [{"label": k, "value": v} for k, v in sorted(per_source.items(), key=lambda kv: -kv[1])], empty="No source has seen this address in the period."),
             bars("Where it was seen", [{"label": k, "value": v} for k, v in _count(t["where"] for t in timeline if t["where"])[:8]], empty="Nowhere in the period."),
             table("SSH logins from this address", (("server", "Server", "text"), ("user", "Account", "mono"), ("outcome", "Outcome", "badge"), ("count", "Times", "num")), [
