@@ -220,10 +220,42 @@ def db():
         conn.close()
 
 
+# One row per call to an AI model: what it was for, who asked, how many tokens and how long it took.
+USAGE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS ai_usage (
+    id INTEGER PRIMARY KEY,
+    ts TEXT NOT NULL,
+    run_id TEXT NOT NULL DEFAULT '',
+    purpose TEXT NOT NULL DEFAULT 'other',
+    actor TEXT NOT NULL DEFAULT '',
+    provider TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    estimated INTEGER NOT NULL DEFAULT 0,
+    tool_calls INTEGER NOT NULL DEFAULT 0,
+    ms INTEGER NOT NULL DEFAULT 0,
+    ok INTEGER NOT NULL DEFAULT 1,
+    error TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS ai_usage_ts ON ai_usage(ts);
+"""
+
+
 def init_db() -> None:
     with db() as conn:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(SCHEMA)
+        conn.executescript(USAGE_SCHEMA)
+        from .predict import SCHEMA as FORECAST_SCHEMA
+        conn.executescript(FORECAST_SCHEMA)
+        from .remote import SCHEMA as REMOTE_SCHEMA
+        conn.executescript(REMOTE_SCHEMA)
+        from .alerting import SCHEMA as ALERT_SCHEMA
+        conn.executescript(ALERT_SCHEMA)
+        conn.executescript(NOTES_SCHEMA)
         _migrate(conn)
 
 
@@ -236,11 +268,52 @@ USER_COLUMNS = {
 }
 
 
+# Incident columns added for triage, prioritisation and the response workflow.
+INCIDENT_COLUMNS = {
+    "priority": "INTEGER NOT NULL DEFAULT 0",          # 0-100, highest first in the work queue
+    "priority_meta": "TEXT NOT NULL DEFAULT '{}'",     # how the score was made up
+    "assignee": "TEXT NOT NULL DEFAULT ''",            # username of the analyst who owns it
+    "due_at": "TEXT NOT NULL DEFAULT ''",              # response deadline from its priority
+    "ack_at": "TEXT NOT NULL DEFAULT ''",              # when someone first took it on
+    "resolved_at": "TEXT NOT NULL DEFAULT ''",
+    "close_reason": "TEXT NOT NULL DEFAULT ''",
+    "ai_verdict": "TEXT NOT NULL DEFAULT ''",          # malicious | suspicious | benign | noise
+    "ai_confidence": "TEXT NOT NULL DEFAULT ''",       # high | medium | low
+    "ai_reason": "TEXT NOT NULL DEFAULT ''",
+    "ai_technique": "TEXT NOT NULL DEFAULT ''",        # MITRE ATT&CK, e.g. "T1110 Brute Force"
+    "triaged_at": "TEXT NOT NULL DEFAULT ''",
+    "escalated_at": "TEXT NOT NULL DEFAULT ''",
+}
+
+# One row per analyst note or logged action on an incident.
+NOTES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS incident_notes (
+    id INTEGER PRIMARY KEY,
+    incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL DEFAULT 'note',
+    author TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    meta TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_incident_notes ON incident_notes(incident_id, id);
+"""
+
+
 def _migrate(conn) -> None:
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
     for name, ddl in USER_COLUMNS.items():
         if name not in existing:
             conn.execute(f"ALTER TABLE users ADD COLUMN {name} {ddl}")
+    inc = {row["name"] for row in conn.execute("PRAGMA table_info(incidents)")}
+    for name, ddl in INCIDENT_COLUMNS.items():
+        if name not in inc:
+            conn.execute(f"ALTER TABLE incidents ADD COLUMN {name} {ddl}")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_incidents_priority ON incidents(status, priority)")
+    cmd = {row["name"] for row in conn.execute("PRAGMA table_info(server_commands)")}
+    for name, ddl in (("incident_id", "INTEGER"), ("undo_command", "TEXT NOT NULL DEFAULT ''"), ("action", "TEXT NOT NULL DEFAULT ''")):
+        if name not in cmd:
+            conn.execute(f"ALTER TABLE server_commands ADD COLUMN {name} {ddl}")
     # The single v0.1 "enforcer" account becomes the first admin and is trusted as verified.
     conn.execute("UPDATE users SET role = 'admin', email_verified = 1 WHERE role = 'enforcer'")
 

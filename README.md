@@ -94,6 +94,10 @@ under Integrations:
   monitoring, threat hunting, vulnerability detection, MITRE ATT&CK, PCI DSS / GDPR / HIPAA /
   NIST 800-53 / TSC, Docker / AWS / GitHub, agents and server status. Configuration assessment,
   agents and server status need CERBERUS to be connected to the Wazuh *dashboard* address.
+- **open-appsec** (web application firewall): home, security events, attack types, sources,
+  protected assets and agents. It needs no extra connection: it reads the JSON events the
+  open-appsec agents write to their output, from Loki (stream `service_name="appsec-agent"`),
+  through the Grafana connection. The analyst can query it too ("what did the WAF block today?").
 - **Grafana**: home, alert rules, notification configuration, silences, active notifications and
   data sources, plus the existing Logs and Infrastructure pages. Every Grafana dashboard also gets
   its own entry under **Dashboards** and is drawn inside CERBERUS with live data: its variables

@@ -12,7 +12,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlencode, urlsplit
 
-from . import grafana, store, wazuh
+from . import grafana, openappsec, snort, store, wazuh
 from .db import get_integration
 
 
@@ -23,7 +23,7 @@ class NotConnected(Exception):
 # ---------- building blocks of a page ----------
 
 # The icon a headline number gets, from the words in its label.
-TILE_ICONS = (("agent", "users"), ("score", "gauge"), ("passed", "check"), ("failed", "close"), ("not applicable", "moon"), ("critical", "alert"),
+TILE_ICONS = (("priority", "alert"), ("sensor", "cpu"), ("signature", "list"), ("address", "globe"), ("external", "globe"), ("blocked", "shield"), ("detected", "eye"), ("request", "globe"), ("source", "globe"), ("asset", "layers"), ("attack", "alert"), ("agent", "users"), ("score", "gauge"), ("passed", "check"), ("failed", "close"), ("not applicable", "moon"), ("critical", "alert"),
               ("high", "alert"), ("medium", "shield"), ("low", "shield"), ("alert", "bell"), ("firing", "bell"), ("rule", "list"), ("level", "activity"),
               ("version", "spark"), ("dashboard", "grid"), ("data source", "plug"), ("type", "layers"), ("folder", "inbox"), ("starred", "star"),
               ("service", "server"), ("silenc", "moon"), ("expired", "clock"), ("pending", "clock"), ("contact", "mail"), ("rout", "send"),
@@ -688,6 +688,368 @@ def gf_datasources(ctx) -> dict:
             empty="No data sources.")]}
 
 
+# ---------- open-appsec (web application firewall) ----------
+
+OA_ACTION = {"Prevent": ("blocked", "ok"), "Detect": ("detected", "high")}
+OA_SEVERITY = {"Critical": "critical", "High": "high", "Medium": "medium", "Low": "low", "Info": "info"}
+OA_PROXY_NOTE = "A private address (172.x, 10.x, 192.168.x) is a proxy or container in front of the agent, not the real visitor."
+
+
+def _oa(ctx) -> dict:
+    """What every open-appsec page starts from: the period's judged requests, the chosen agent host and the filters to show."""
+    cfg, q = ctx["cfg"], ctx["q"]
+    hours = _hours(q)
+    everything = openappsec.all_requests(cfg, int(hours), cfg.get("_inventory"))
+    hosts = sorted({e["host"] for e in everything if e["host"]} | ({q["host"]} if q.get("host") else set()))
+    host = store.text(q.get("host"), 120)
+    events = openappsec.pick(everything, host=host)
+    return {"cfg": cfg, "q": q, "hours": int(hours), "period": hours, "host": host, "events": events,
+            "keep": {"host": host, "hours": "" if hours == "24" else hours},
+            "capped": "",
+            "filters": [select("host", "Agent", host, [("", "All agents")] + [(h, h) for h in hosts]), select("hours", "Period", hours, HOURS)]}
+
+
+def _oa_link(o: dict, page="events", **change) -> str:
+    return link(f"#/app/openappsec/{page}", o["keep"], **change)
+
+
+def _oa_split(events: list[dict]) -> dict:
+    return {action: sum(1 for e in events if e["action"] == action) for action in openappsec.ACTIONS}
+
+
+def oa_home(ctx) -> dict:
+    o = _oa(ctx)
+    events, total = o["events"], len(o["events"])
+    split = _oa_split(events)
+    severity = dict(openappsec.tally(events, "severity"))
+    step = STEP_MS[o["period"]] // 1000
+    start, lines = openappsec.over_time(events, o["hours"], step)
+    return {
+        "title": "open-appsec overview", "subtitle": " ".join(filter(None, ["What your web application firewall judged: requests it blocked, and requests it only flagged.", o["capped"]])),
+        "filters": o["filters"],
+        "tiles": [tile("Requests judged", total, href=_oa_link(o)),
+                  tile("Blocked", split["Prevent"], "ok" if split["Prevent"] else "", href=_oa_link(o, action="Prevent"),
+                       meter=split["Prevent"] / total if total else None, hint=f"{round(100 * split['Prevent'] / total)}% of judged requests" if total else ""),
+                  tile("Detected, not blocked", split["Detect"], "high" if split["Detect"] else "", href=_oa_link(o, action="Detect")),
+                  tile("Critical", severity.get("Critical", 0), "critical" if severity.get("Critical") else "", href=_oa_link(o, severity="Critical"))],
+        "blocks": [
+            {"type": "lines", "title": "Requests judged over time", "unit": "", "wide": True, "start": start * 1000, "step": step * 1000, "note": "",
+             "series": [{"name": "Blocked", "v": lines["Prevent"]}, {"name": "Detected, not blocked", "v": lines["Detect"]}] if total else []},
+            segments("By severity", [{"label": s, "value": severity.get(s, 0), "tone": OA_SEVERITY[s]} for s in openappsec.SEVERITIES[:4]]),
+            bars("Attack types", [{"label": name, "value": c["total"], "href": _oa_link(o, text=name)} for name, c in list(openappsec.attack_types(events).items())[:8]]),
+            bars("Most targeted paths", [{"label": k or "/", "value": n, "href": _oa_link(o, text=k)} for k, n in openappsec.tally(events, "path")[:8]]),
+            bars("Top sources", [{"label": k or "unknown", "value": n, "href": _oa_link(o, text=k)} for k, n in openappsec.tally(events, "source")[:8]]),
+            bars("By protected asset", [{"label": k or "unnamed", "value": n, "href": _oa_link(o, "assets")} for k, n in openappsec.tally(events, "asset")[:8]]
+                 + [{"label": a["name"], "value": 0, "href": _oa_link(o, "assets")} for a in (ctx["cfg"].get("_inventory") or {}).get("assets", [])
+                    if a["name"] not in {e["asset"] for e in events}][:8]),
+        ]}
+
+
+def oa_events(ctx) -> dict:
+    o = _oa(ctx)
+    q = o["q"]
+    action = q.get("action") if q.get("action") in openappsec.ACTIONS else ""
+    severity = q.get("severity") if q.get("severity") in openappsec.SEVERITIES else ""
+    words = store.text(q.get("text"), 120)
+    events = openappsec.pick(o["events"], action=action, severity=severity, text=words)
+    split = _oa_split(events)
+    rows = []
+    for e in events[:150]:
+        label, tone = OA_ACTION.get(e["action"], (str(e["action"]).lower(), ""))
+        rows.append({
+            "time": stamp(e["time"]), "action": badge(label, tone), "severity": badge(e["severity"], OA_SEVERITY.get(e["severity"], "")) if e["severity"] else "", "type": e["type"],
+            "request": f"{e['method']} {e['path']}".strip()[:160], "source": e["source"], "asset": e["asset"],
+            "_detail": "\n".join(f"{name}: {value}" for name, value in (
+                ("Site", e["site"]), ("Query", e["query"][:600]), ("What matched", e["matched"][:800]), ("Found in", e["found_in"]), ("Parameter", e["parameter"]),
+                ("Indicators", e["indicators"]), ("Confidence", e["confidence"]), ("Source reputation", e["reputation"]), ("Practice", e["practice"]),
+                ("Browser", e.get("browser")), ("Agent host", e["host"]), ("Reference", e["reference"]),
+                ("Seen through", "the web server's access log; this asset's detailed events go to the open-appsec cloud only" if e.get("via") == "gateway" else "")) if value not in (None, ""))})
+    return {
+        "title": "Security events", "subtitle": "Every request the firewall blocked or flagged, newest first. Click a row for what it matched.",
+        "filters": o["filters"] + [select("action", "Action", action, (("", "Blocked and detected"), ("Prevent", "Blocked"), ("Detect", "Detected, not blocked"))),
+                                   select("severity", "Severity", severity, [("", "All severities")] + [(s, s) for s in openappsec.SEVERITIES[:4]]),
+                                   search_box("text", "Search path, source or attack type", words, 250)],
+        "tiles": [tile("Requests judged", len(events)), tile("Blocked", split["Prevent"], "ok" if split["Prevent"] else ""),
+                  tile("Detected, not blocked", split["Detect"], "high" if split["Detect"] else "")],
+        "blocks": [table(f"Latest requests{f' · showing {len(rows)} of {len(events):,}' if len(events) > len(rows) else ''}",
+                         (("time", "Time", "time"), ("action", "Action", "badge"), ("severity", "Severity", "badge"), ("type", "Attack type", "wrap"),
+                          ("request", "Request", "mono"), ("source", "Source", "mono"), ("asset", "Asset", "text")), rows,
+                         note=" ".join(filter(None, [OA_PROXY_NOTE if any(str(r["source"]).startswith(("172.", "10.", "192.168.")) for r in rows) else "", o["capped"]])),
+                         empty="No requests were blocked or flagged in this period.")]}
+
+
+def oa_types(ctx) -> dict:
+    o = _oa(ctx)
+    types = openappsec.attack_types(o["events"])
+    return {
+        "title": "Attack types", "subtitle": "What kinds of attack were attempted. One request can count under several types.", "filters": o["filters"],
+        "tiles": [tile("Attack types seen", len(types)), tile("Most common", next(iter(types), "—"))],
+        "blocks": [bars("Requests by attack type", [{"label": name, "value": c["total"], "href": _oa_link(o, text=name)} for name, c in list(types.items())[:12]]),
+                   table("Attack types", (("type", "Attack type", "text"), ("blocked", "Blocked", "num"), ("detected", "Detected, not blocked", "num"), ("total", "Requests", "num")), [
+                       {"type": name, "blocked": c["Prevent"], "detected": c["Detect"], "total": c["total"], "_href": _oa_link(o, text=name)} for name, c in types.items()],
+                         empty="No attacks were seen in this period.")]}
+
+
+def _oa_grouped(events: list[dict], keys: tuple) -> list[tuple[tuple, dict]]:
+    groups: dict[tuple, dict] = {}
+    for e in events:
+        row = groups.setdefault(tuple(e[k] for k in keys), {"Prevent": 0, "Detect": 0, "last": e["time"]})
+        if e["action"] in ("Prevent", "Detect"):
+            row[e["action"]] += 1
+    return sorted(groups.items(), key=lambda kv: kv[1]["Prevent"] + kv[1]["Detect"], reverse=True)
+
+
+def oa_sources(ctx) -> dict:
+    o = _oa(ctx)
+    ranked = _oa_grouped(o["events"], ("source",))
+    private = any(str(key[0]).startswith(("172.", "10.", "192.168.")) for key, _ in ranked)
+    return {
+        "title": "Sources", "subtitle": "Who the flagged requests came from, as the agent identified them.", "filters": o["filters"],
+        "tiles": [tile("Sources seen", len(ranked)), tile("Busiest source", (ranked[0][0][0] or "unknown") if ranked else "—")],
+        "blocks": [table("Sources", (("source", "Source", "mono"), ("blocked", "Blocked", "num"), ("detected", "Detected, not blocked", "num"), ("total", "Requests", "num"),
+                                     ("last", "Last seen", "time")), [
+            {"source": key[0] or "unknown", "blocked": c["Prevent"], "detected": c["Detect"], "total": c["Prevent"] + c["Detect"], "last": stamp(c["last"]),
+             "_href": _oa_link(o, text=key[0])} for key, c in ranked[:100]],
+            note=(OA_PROXY_NOTE + " To see real visitors, have the proxy pass X-Forwarded-For and set the asset's source identifier to it in open-appsec.") if private else "",
+            empty="No sources in this period.")]}
+
+
+OA_SILENT = ("Assets marked 'no events here' are protected, but their requests are not in the agents' output, so CERBERUS cannot see them. "
+             "In the open-appsec portal, open Triggers and give those assets the same log trigger (or the same 'log to' destinations) as an asset that does report.")
+
+
+def _oa_inventory(ctx) -> tuple[dict, dict]:
+    """(recorded assets and agents, agents seen live by ID)."""
+    return ctx["cfg"].get("_inventory") or {"assets": [], "agents": []}, openappsec.live_agents(ctx["cfg"])
+
+
+def _oa_profile_hosts(recorded: dict, live: dict) -> dict[str, list[str]]:
+    """Which servers enforce each profile, through the agents recorded for it."""
+    out: dict[str, list[str]] = {}
+    for agent in recorded["agents"]:
+        if agent.get("profile") and agent["id"] in live:
+            out.setdefault(agent["profile"], []).append(live[agent["id"]]["host"])
+    return out
+
+
+def oa_assets(ctx) -> dict:
+    o = _oa(ctx)
+    recorded, live = _oa_inventory(ctx)
+    hosts = _oa_profile_hosts(recorded, live)
+    seen = {key[0]: c for key, c in _oa_grouped(o["events"], ("asset",))}
+    through_agent = {e["asset"] for e in o["events"] if e.get("via") != "gateway"}
+    sites = {}
+    for e in o["events"]:
+        sites.setdefault(e["asset"], e["site"])
+    known = {a["name"]: a for a in recorded["assets"]}
+    rows = []
+    for name in list(known) + [n for n in seen if n and n not in known]:
+        c, info = seen.get(name), known.get(name, {})
+        state = badge("agent events", "ok") if name in through_agent else badge("gateway log", "info") if c else badge("nothing in this period", "low")
+        rows.append({"asset": name, "address": info.get("address") or sites.get(name, ""), "profile": info.get("profile", ""),
+                     "server": ", ".join(hosts.get(info.get("profile", ""), [])), "events": state, "blocked": c["Prevent"] if c else 0, "detected": c["Detect"] if c else 0,
+                     "total": (c["Prevent"] + c["Detect"]) if c else 0, "last": stamp(c["last"]) if c else None, "_href": _oa_link(o, text=name) if c else ""})
+    rows.sort(key=lambda r: r["total"], reverse=True)
+    try:
+        gateway = openappsec.gateway_traffic(o["cfg"], o["hours"])
+    except grafana.GrafanaError:
+        gateway = {}
+    behind: dict[str, list[str]] = {}
+    for a in recorded["assets"]:
+        for server in hosts.get(a.get("profile", ""), []):
+            behind.setdefault(server, []).append(a["name"])
+    gateway_rows = [{"server": server, "assets": ", ".join(behind.get(server, [])) or "not recorded", "visitors": g["visitors"], "probes": g["probes"], "blocked": g["blocked"]}
+                    for server, g in sorted(gateway.items())]
+    partial = any(r["events"]["text"] == "gateway log" for r in rows)
+    return {
+        "title": "Protected assets", "subtitle": "The sites and APIs open-appsec is guarding, with the hostile traffic each one drew in this period.", "filters": o["filters"],
+        "tiles": [tile("Assets protected", len(rows)), tile("Under attack in this period", sum(1 for r in rows if r["total"]), "high" if any(r["total"] for r in rows) else ""),
+                  tile("Blocked requests", sum(r["blocked"] for r in rows), "ok" if any(r["blocked"] for r in rows) else "")],
+        "blocks": [table("Assets", (("asset", "Asset", "text"), ("address", "Address", "mono"), ("profile", "Profile", "text"), ("server", "Agent server", "text"),
+                                    ("events", "Seen through", "badge"), ("blocked", "Blocked", "num"), ("detected", "Detected, not blocked", "num"), ("last", "Last attack", "time")), rows,
+                         note=" ".join(filter(None, [
+                             "'Gateway log' assets send their detailed events to the open-appsec cloud only, so here each blocked request is taken from the web server's "
+                             "access log: you see the time, path and source, but not the attack type. Turning on agent logging in that asset's log trigger "
+                             "(open-appsec portal, Triggers) brings the full detail." if partial else "",
+                             "" if recorded["assets"] else "Only assets that drew flagged requests are listed. An admin can record the full list under Integrations."])),
+                         empty="No assets are recorded and none drew flagged requests in this period.")]
+        + ([table("Traffic through each gateway", (("server", "Agent server", "text"), ("assets", "Assets behind it", "wrap"), ("visitors", "Visitor requests", "num"),
+                                                  ("probes", "Uptime probes", "num"), ("blocked", "Blocked (HTTP 403)", "num")), gateway_rows,
+                  note="From the web servers' access logs.")] if gateway_rows else [])}
+
+
+def oa_profiles(ctx) -> dict:
+    recorded, live = _oa_inventory(ctx)
+    profiles: dict[str, dict] = {}
+    for asset in recorded["assets"]:
+        if asset.get("profile"):
+            profiles.setdefault(asset["profile"], {"assets": [], "agents": []})["assets"].append(asset["name"])
+    for agent in recorded["agents"]:
+        if agent.get("profile"):
+            profiles.setdefault(agent["profile"], {"assets": [], "agents": []})["agents"].append(agent)
+    rows = []
+    for name, p in sorted(profiles.items()):
+        connected = [live[a["id"]] for a in p["agents"] if a["id"] in live]
+        loads = sorted((c["policy"] for c in connected if c["policy"]), reverse=True)
+        rows.append({"profile": name, "agents": f"{len(connected)} of {len(p['agents'])} reporting" if p["agents"] else "none recorded",
+                     "state": badge("connected", "ok") if connected else badge("not seen", "medium" if p["agents"] else "low"),
+                     "servers": ", ".join(sorted({c["host"] for c in connected})), "version": ", ".join(sorted({c["version"] for c in connected if c["version"]})),
+                     "policy": stamp(loads[0]) if loads else None, "assets": ", ".join(p["assets"]) or "—"})
+    return {
+        "title": "Profiles", "subtitle": "Each profile is a deployment: the agents that enforce it and the assets it protects.",
+        "tiles": [tile("Profiles", len(rows)), tile("Agents reporting", sum(1 for a in recorded["agents"] if a["id"] in live)), tile("Assets protected", len(recorded["assets"]))],
+        "blocks": [table("Profiles", (("profile", "Profile", "text"), ("state", "State", "badge"), ("agents", "Agents", "text"), ("servers", "Agent server", "text"),
+                                      ("version", "Agent version", "text"), ("policy", "Policy last loaded", "time"), ("assets", "Protected assets", "wrap")), rows,
+                         note="Profile, asset and agent names are recorded by an admin under Integrations; state, version and policy times are live.",
+                         empty="No profiles are recorded yet. An admin can record assets, profiles and agents under Integrations.")]}
+
+
+def oa_agents(ctx) -> dict:
+    cfg = ctx["cfg"]
+    recorded, live = _oa_inventory(ctx)
+    judged = dict(openappsec.tally(openappsec.requests(cfg, 168), "host"))
+    known = {a["id"]: a for a in recorded["agents"]}
+    rows = []
+    for agent_id in list(known) + [i for i in live if i not in known]:
+        info, seen = known.get(agent_id, {}), live.get(agent_id)
+        rows.append({"state": badge("connected", "ok") if seen else badge("not seen for 7 days", "critical"), "kind": info.get("kind", ""), "agent": agent_id,
+                     "server": seen["host"] if seen else "", "profile": info.get("profile", ""), "version": seen["version"] if seen else "",
+                     "requests": judged.get(seen["host"], 0) if seen else 0, "starts": seen["starts"] if seen else 0, "policy": stamp(seen["policy"]) if seen else None,
+                     "installed": info.get("installed", ""), "_href": f"#/app/openappsec/events?{urlencode({'host': seen['host'], 'hours': '168'})}" if seen else ""})
+    return {
+        "title": "Agents", "subtitle": "The open-appsec agents, and what each one has reported in the last 7 days.",
+        "tiles": [tile("Agents", len(rows)), tile("Connected", sum(1 for r in rows if r["server"]), "ok" if any(r["server"] for r in rows) else ""),
+                  tile("Requests judged, 7 days", sum(judged.values())), tile("Service restarts, 7 days", sum(r["starts"] for r in rows))],
+        "blocks": [table("Agents", (("state", "State", "badge"), ("kind", "Type", "text"), ("agent", "Agent ID", "mono"), ("server", "Server", "text"), ("profile", "Profile", "text"),
+                                    ("version", "Version", "text"), ("requests", "Requests judged", "num"), ("starts", "Restarts", "num"),
+                                    ("policy", "Policy last loaded", "time"), ("installed", "First installed", "text")), rows,
+                         note="An agent is connected when its output reaches Loki. Type, profile and install date are recorded by an admin under Integrations.",
+                         empty="No open-appsec agent has written to Loki in the last 7 days.")]}
+
+
+# ---------- Snort (network intrusion detection) ----------
+
+SN_PERIODS = (("1", "Last hour"), ("6", "Last 6 hours"), ("24", "Last 24 hours"))
+SN_STEP = {"1": 120, "6": 600, "24": 1800}
+SN_TONE = {"1": "critical", "2": "high", "3": "medium", "4": "low"}
+SN_NAME = {"1": "Priority 1 (high)", "2": "Priority 2 (medium)", "3": "Priority 3 (low)", "4": "Priority 4"}
+
+
+def _sn(ctx) -> dict:
+    cfg, q = ctx["cfg"], ctx["q"]
+    hours = q.get("hours") if q.get("hours") in SN_STEP else "1"
+    minutes = int(hours) * 60
+    # Which sensors exist changes rarely, and finding out means reading a day of journal: remember it for ten minutes.
+    sensors = [labels["host"] for labels, _ in snort.counts(cfg, ("host",), 1440, keep=600) if labels.get("host")]
+    host = q.get("host") if q.get("host") in sensors else ""
+    return {"cfg": cfg, "q": q, "hours": hours, "minutes": minutes, "host": host, "sensors": sensors, "keep": {"host": host, "hours": "" if hours == "1" else hours},
+            "filters": [select("host", "Sensor", host, [("", "All sensors")] + [(h, h) for h in sorted(sensors)]), select("hours", "Period", hours, SN_PERIODS)]}
+
+
+def _sn_link(o: dict, page="alerts", **change) -> str:
+    return link(f"#/app/snort/{page}", o["keep"], **change)
+
+
+def sn_home(ctx) -> dict:
+    o = _sn(ctx)
+    cfg, minutes, host = o["cfg"], o["minutes"], o["host"]
+    step = SN_STEP[o["hours"]]
+    found = snort.gather({
+        "prio": lambda: snort.counts(cfg, ("prio",), minutes, host=host),
+        "time": lambda: snort.over_time(cfg, minutes, step, host=host),
+        "sigs": lambda: snort.counts(cfg, ("sig", "msg", "prio"), minutes, 8, host=host),
+        "src": lambda: snort.counts(cfg, ("src",), minutes, 8, host=host),
+        "dst": lambda: snort.counts(cfg, ("dst",), minutes, 8, host=host),
+        "proto": lambda: snort.counts(cfg, ("proto",), minutes, host=host)})
+    prio = {labels["prio"]: n for labels, n in found["prio"]}
+    total = sum(prio.values())
+    start, lines = found["time"]
+    return {
+        "title": "Snort overview", "subtitle": "What your network intrusion sensors alerted on. Snort detects and reports; it does not block.",
+        "filters": o["filters"],
+        "tiles": [tile("Alerts", total, href=_sn_link(o)),
+                  tile("Priority 1", prio.get("1", 0), "critical" if prio.get("1") else "", hint="most serious", href=_sn_link(o, priority="1")),
+                  tile("Priority 2", prio.get("2", 0), "high" if prio.get("2") else "", href=_sn_link(o, priority="2")),
+                  tile("Sensors reporting", len(o["sensors"]), "ok" if o["sensors"] else "", href="#/app/snort/sensors")],
+        "blocks": [
+            {"type": "lines", "title": "Alerts over time", "unit": "", "wide": True, "start": start * 1000, "step": step * 1000, "note": "",
+             "series": [{"name": SN_NAME.get(p, f"Priority {p}"), "v": lines[p]} for p in sorted(lines)]},
+            segments("By priority", [{"label": SN_NAME.get(p, p), "value": prio.get(p, 0), "tone": SN_TONE[p]} for p in ("1", "2", "3", "4") if p != "4" or prio.get(p)]),
+            bars("Top signatures", [{"label": l["msg"], "value": n, "tone": SN_TONE.get(l["prio"], "") if l["prio"] in ("1", "2") else "", "href": _sn_link(o, text=l["msg"])} for l, n in found["sigs"]]),
+            bars("Top sources", [{"label": l["src"], "value": n, "href": _sn_link(o, text=l["src"])} for l, n in found["src"]]),
+            bars("Top targets", [{"label": l["dst"], "value": n, "href": _sn_link(o, text=l["dst"])} for l, n in found["dst"]]),
+            bars("By protocol", [{"label": l["proto"], "value": n} for l, n in found["proto"]]),
+        ]}
+
+
+def sn_alerts(ctx) -> dict:
+    o = _sn(ctx)
+    q = o["q"]
+    priority = q.get("priority") if q.get("priority") in snort.PRIORITIES else ""
+    words = store.text(q.get("text"), 120)
+    found = snort.gather({
+        "prio": lambda: snort.counts(o["cfg"], ("prio",), o["minutes"], host=o["host"], priority=priority, text=words),
+        "latest": lambda: snort.latest(o["cfg"], o["minutes"], 150, host=o["host"], priority=priority, text=words)})
+    total = sum(n for _, n in found["prio"])
+    rows = [{"time": stamp(a["time"]), "priority": badge(a["priority"], SN_TONE.get(a["priority"], "")), "message": a["message"], "kind": a["kind"], "protocol": a["protocol"],
+             "source": a["source"] + (f":{a['source_port']}" if a["source_port"] else ""), "target": a["target"] + (f":{a['target_port']}" if a["target_port"] else ""),
+             "sensor": a["sensor"], "_detail": f"Signature {a['sig']}\nClassification: {a['kind'] or 'none'}\nRule documentation: https://www.snort.org/rule_docs/{a['sig'].replace(':', '-')}",
+             "_url": f"https://www.snort.org/rule_docs/{a['sig'].replace(':', '-')}"} for a in found["latest"]]
+    return {
+        "title": "Alerts", "subtitle": "Each alert Snort raised, newest first. Click a row for the signature and its documentation.",
+        "filters": o["filters"] + [select("priority", "Priority", priority, [("", "All priorities")] + [(p, SN_NAME[p]) for p in ("1", "2", "3")]),
+                                   search_box("text", "Search signature or address", words, 250)],
+        "tiles": [tile("Alerts", total)] + [tile(SN_NAME[p], next((n for l, n in found["prio"] if l["prio"] == p), 0), SN_TONE[p] if p != "3" else "") for p in ("1", "2", "3")],
+        "blocks": [table(f"Latest alerts{f' · showing {len(rows)} of {total:,}' if total > len(rows) else ''}",
+                         (("time", "Time", "time"), ("priority", "Priority", "badge"), ("message", "Signature", "wrap"), ("protocol", "Protocol", "text"),
+                          ("source", "Source", "mono"), ("target", "Target", "mono"), ("sensor", "Sensor", "text")), rows, empty="No alerts match in this period.")]}
+
+
+def sn_signatures(ctx) -> dict:
+    o = _sn(ctx)
+    found = snort.counts(o["cfg"], ("sig", "msg", "kind", "prio"), o["minutes"], 100, host=o["host"])
+    return {
+        "title": "Signatures", "subtitle": "Which detection rules fired, and how often. A noisy low-priority rule is usually routine traffic.", "filters": o["filters"],
+        "tiles": [tile("Signatures seen", len(found)), tile("Priority 1 signatures", sum(1 for l, _ in found if l["prio"] == "1"), "critical" if any(l["prio"] == "1" for l, _ in found) else "")],
+        "blocks": [table("Signatures", (("sig", "ID", "mono"), ("message", "Signature", "wrap"), ("kind", "Classification", "text"), ("priority", "Priority", "badge"), ("alerts", "Alerts", "num")), [
+            {"sig": l["sig"], "message": l["msg"], "kind": l["kind"], "priority": badge(l["prio"], SN_TONE.get(l["prio"], "")), "alerts": n, "_href": _sn_link(o, text=l["msg"])}
+            for l, n in sorted(found, key=lambda r: (r[0]["prio"], -r[1]))], empty="No signatures fired in this period.")]}
+
+
+def _sn_addresses(field: str, title: str, about: str):
+    def page(ctx) -> dict:
+        o = _sn(ctx)
+        found = snort.gather({
+            "all": lambda: snort.counts(o["cfg"], (field,), o["minutes"], 100, host=o["host"]),
+            "serious": lambda: snort.counts(o["cfg"], (field,), o["minutes"], 100, host=o["host"], priority="1")})
+        serious = {l[field]: n for l, n in found["serious"]}
+        rows = [{"address": l[field], "kind": badge("internal", "low") if l[field].startswith(("10.", "172.16.", "192.168.", "239.", "224.")) else badge("external", "info"),
+                 "serious": serious.get(l[field], 0), "alerts": n, "_href": _sn_link(o, text=l[field])} for l, n in found["all"]]
+        return {"title": title, "subtitle": about, "filters": o["filters"],
+                "tiles": [tile("Addresses", len(rows)), tile("External", sum(1 for r in rows if r["kind"]["text"] == "external")),
+                          tile("With priority 1 alerts", sum(1 for r in rows if r["serious"]), "critical" if any(r["serious"] for r in rows) else "")],
+                "blocks": [table(title, (("address", "Address", "mono"), ("kind", "Where", "badge"), ("serious", "Priority 1 alerts", "num"), ("alerts", "All alerts", "num")), rows,
+                                 empty="Nothing in this period.")]}
+    return page
+
+
+def sn_sensors(ctx) -> dict:
+    cfg = ctx["cfg"]
+    found = snort.gather({"day": lambda: snort.counts(cfg, ("host",), 1440, keep=600), "hour": lambda: snort.counts(cfg, ("host",), 60), "last": lambda: snort.latest(cfg, 1440, 400)})
+    hour = {l["host"]: n for l, n in found["hour"]}
+    last = {}
+    for a in found["last"]:
+        last.setdefault(a["sensor"], a["time"])
+    rows = [{"sensor": l["host"], "state": badge("reporting", "ok") if hour.get(l["host"]) else badge("quiet for an hour", "medium"), "hour": hour.get(l["host"], 0), "day": n,
+             "last": stamp(last.get(l["host"])), "_href": f"#/app/snort/alerts?{urlencode({'host': l['host']})}"} for l, n in found["day"]]
+    return {
+        "title": "Sensors", "subtitle": "The servers whose Snort alerts reach CERBERUS.",
+        "tiles": [tile("Sensors reporting", sum(1 for r in rows if r["hour"]), "ok" if any(r["hour"] for r in rows) else "high"), tile("Alerts, last 24 hours", sum(r["day"] for r in rows))],
+        "blocks": [table("Sensors", (("sensor", "Server", "text"), ("state", "State", "badge"), ("hour", "Alerts, last hour", "num"), ("day", "Alerts, last 24 hours", "num"), ("last", "Last alert", "time")), rows,
+                         note="A server appears here once its Snort alerts are copied into its system journal, which the log shipper forwards to Loki with the program name 'snort'.",
+                         empty="No Snort alerts have reached Loki in the last 24 hours.")]}
+
+
 # ---------- Grafana dashboards, drawn inside CERBERUS ----------
 #
 # Each dashboard's definition is read from Grafana, its variables are resolved, and every panel's
@@ -1064,6 +1426,34 @@ APPS = [
 ]
 
 
+APPS.append(
+    {"id": "openappsec", "name": "open-appsec", "about": "Web application firewall", "logo": "/static/logos/openappsec.png",
+     "ready": lambda conn: openappsec.is_ready(get_integration(conn, "grafana")),
+     "config": lambda conn: {**get_integration(conn, "grafana"), "_inventory": openappsec.inventory(conn)},
+     "errors": (grafana.GrafanaError,), "open": lambda cfg, path: "https://my.openappsec.io/",
+     "menu": [
+         ("", [_page("overview", "Home", "home", oa_home)]),
+         ("Monitor", [_page("events", "Security events", "shield", oa_events), _page("types", "Attack types", "alert", oa_types),
+                      _page("sources", "Sources", "globe", oa_sources)]),
+         ("Assets", [_page("assets", "Protected assets", "layers", oa_assets), _page("profiles", "Profiles", "grid", oa_profiles),
+                     _page("agents", "Agents", "cpu", oa_agents)]),
+         ("Explore", [_route("#/logs", "Raw logs", "terminal")]),
+     ]})
+
+
+APPS.append(
+    {"id": "snort", "name": "Snort", "about": "Network intrusion detection", "logo": "/static/logos/snort.png",
+     "ready": lambda conn: snort.is_ready(get_integration(conn, "grafana")), "config": lambda conn: get_integration(conn, "grafana"),
+     "errors": (grafana.GrafanaError,), "open": lambda cfg, path: "",
+     "menu": [
+         ("", [_page("overview", "Home", "home", sn_home)]),
+         ("Monitor", [_page("alerts", "Alerts", "bell", sn_alerts), _page("signatures", "Signatures", "list", sn_signatures)]),
+         ("Network", [_page("sources", "Sources", "globe", _sn_addresses("src", "Sources", "Where the traffic that raised alerts came from.")),
+                      _page("targets", "Targets", "server", _sn_addresses("dst", "Targets", "Which addresses the alerting traffic was sent to."))]),
+         ("Sensors", [_page("sensors", "Sensors", "cpu", sn_sensors)]),
+     ]})
+
+
 def catalog(conn) -> list[dict]:
     """What the application switcher shows: each application, whether it is connected, and its menu."""
     out = []
@@ -1071,7 +1461,7 @@ def catalog(conn) -> list[dict]:
         connected = a["ready"](conn)
         # Entries an application adds from its own content, such as one per Grafana dashboard.
         more = a["more"](a["config"](conn)) if connected and a.get("more") else {}
-        out.append({"id": a["id"], "name": a["name"], "about": a["about"], "connected": connected, "logo": f"/static/logos/{a['id']}.svg",
+        out.append({"id": a["id"], "name": a["name"], "about": a["about"], "connected": connected, "logo": a.get("logo") or f"/static/logos/{a['id']}.svg",
                     "menu": [{"label": label, "items": [{k: v for k, v in item.items() if k in ("id", "route", "label", "icon")} for item in items]
                               + more.get(label, [])} for label, items in a["menu"]]})
     return out
@@ -1099,3 +1489,40 @@ def render(conn, app_id: str, page_id: str, q: dict) -> dict:
 
 def errors() -> tuple:
     return tuple(e for a in APPS for e in a["errors"])
+
+
+def digest(page: dict) -> dict:
+    """A page reduced to its facts, for the AI to explain: numbers, breakdowns and the first rows of each table."""
+    plain = lambda v: v.get("text", "") if isinstance(v, dict) else v
+    chosen = {}
+    for f in page.get("filters", []):
+        label = next((o[1] for o in f.get("options", []) if o[0] == f.get("value")), f.get("value"))
+        if label not in (None, ""):
+            chosen[f.get("label", f.get("name"))] = label
+    out = {"application": page.get("app_name"), "page": page.get("title"), "about": page.get("subtitle"), "filters": chosen,
+           "headline_numbers": [{k: v for k, v in {"what": t["label"], "value": t["value"], "unit": t.get("unit"), "state": t.get("tone"), "note": t.get("hint")}.items()
+                                 if v not in (None, "")} for t in page.get("tiles", [])],
+           "sections": []}
+    for b in page.get("blocks", []):
+        kind = b.get("type")
+        if kind in ("bars", "segments"):
+            out["sections"].append({"title": b.get("title"), "unit": b.get("unit"), "breakdown": [{"name": i["label"], "value": i["value"]} for i in b.get("items", [])[:12]]})
+        elif kind == "tiles":
+            out["sections"].append({"numbers": [{"what": t["label"], "value": t["value"], "unit": t.get("unit"), "state": t.get("tone")} for t in b.get("items", [])]})
+        elif kind == "gauge":
+            out["sections"].append({"gauge": b.get("title"), "value": b.get("value"), "unit": b.get("unit"), "scale_max": b.get("max"), "state": b.get("tone")})
+        elif kind == "lines":
+            series = []
+            for line in b.get("series", [])[:8]:
+                values = [v for v in line["v"] if v is not None]
+                if values:
+                    peak = max(range(len(line["v"])), key=lambda i: line["v"][i] if line["v"][i] is not None else float("-inf"))
+                    series.append({"name": line["name"], "latest": values[-1], "lowest": min(values), "highest": max(values), "average": float(f"{sum(values) / len(values):.4g}"),
+                                   "highest_at": time.strftime("%Y-%m-%dT%H:%MZ", time.gmtime((b.get("start", 0) + peak * b.get("step", 0)) / 1000))})
+            out["sections"].append({"chart": b.get("title"), "unit": b.get("unit"), "series": series})
+        elif kind == "table":
+            columns = b.get("columns", [])
+            rows = [{c["label"] or c["key"]: plain(r.get(c["key"])) for c in columns if plain(r.get(c["key"])) not in (None, "")} for r in b.get("rows", [])[:25]]
+            out["sections"].append({"table": b.get("title"), "rows_in_table": len(b.get("rows", [])), "first_rows": rows, "note": b.get("note") or None})
+    return out
+

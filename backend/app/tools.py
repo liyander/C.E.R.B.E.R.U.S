@@ -7,7 +7,7 @@ queue a proposal for a human Enforcer.
 import json
 from datetime import datetime, timedelta, timezone
 
-from . import accounts, grafana, mailer, store, wazuh
+from . import accounts, grafana, mailer, openappsec, snort, store, wazuh
 from .db import ago, audit, get_integration, iso, now
 
 APPROVAL_TTL_HOURS = 24
@@ -126,14 +126,107 @@ REPORT_TOOL = _fn(
     }, ["subject", "report"])
 
 
+SNORT_TOOL = _fn(
+    "snort_alerts",
+    "What the Snort network intrusion sensors alerted on in a period: totals by priority, the signatures that fired, the top source and target "
+    "addresses, which sensors reported, and the newest individual alerts. Use it for questions about network attacks, scans, intrusion alerts, "
+    "a signature, or what an IP address has been doing on the network.", {
+        "hours": {"type": "integer", "description": "Look-back window in hours (default 1, max 24)"},
+        "priority": {"type": "string", "enum": ["1", "2", "3"], "description": "Only this Snort priority (1 is the most serious)"},
+        "text": {"type": "string", "description": "Only alerts mentioning this text: part of a signature name, or an IP address"},
+        "limit": {"type": "integer", "description": "How many individual alerts to return (default 15, max 40)"},
+    })
+
+
+LOGINS_TOOL = _fn(
+    "get_logins",
+    "Who logged in to a server over SSH: the users, the addresses they came from, the method (password or key), how many times and when. "
+    "outcome 'success' lists accepted logins, 'failed' lists rejected attempts. This is THE tool for 'who logged in to X', 'successful logins', "
+    "'failed logins', 'did anyone log in as root'. One call answers it; do not search events or logs for the same thing.", {
+        "host": {"type": "string", "description": "Server name, e.g. sietlms. Leave empty for every server."},
+        "outcome": {"type": "string", "enum": ["success", "failed"], "description": "Accepted logins (default) or failed attempts"},
+        "user": {"type": "string", "description": "Only this account"},
+        "hours": {"type": "integer", "description": "Look-back window in hours (default 24, max 168)"},
+    })
+
+
+OPENAPPSEC_TOOL = _fn(
+    "openappsec_events",
+    "What the open-appsec web application firewall (WAF) judged in a period: how many requests it blocked or only detected, by severity and "
+    "attack type (SQL injection, remote code execution, path traversal, scanning...), the most targeted paths, sources and protected sites, "
+    "and the newest individual requests with what matched. Use it for any question about web attacks, the WAF, blocked requests or a URL path.", {
+        "hours": {"type": "integer", "description": "Look-back window in hours (default 24, max 720)"},
+        "action": {"type": "string", "enum": ["Prevent", "Detect"], "description": "Only blocked (Prevent) or only detected-and-allowed (Detect) requests"},
+        "text": {"type": "string", "description": "Only requests mentioning this text: a path, source address, site or attack type"},
+        "limit": {"type": "integer", "description": "How many individual requests to return (default 15, max 40)"},
+    })
+
+
+FORECAST_TOOL = _fn(
+    "attack_forecast",
+    "CERBERUS's early warnings: attacks that are building up toward an intrusion (scanning turning into exploit attempts, password guessing "
+    "speeding up against real accounts, a vulnerable internet-facing machine under attack, a surge of hostile traffic, a login after many "
+    "failures), each with a likelihood, the stage reached, the evidence, what usually happens next and what to do. Use it for 'is an attack "
+    "coming', 'what is likely to be hacked', 'predict', 'early warning' or 'what should I do first'.", {})
+
+
+PATCH_TOOL = _fn(
+    "patch_status",
+    "For the vulnerabilities Wazuh found: whether a patch is available (and the fixed version), whether it needs Ubuntu Pro, or has no patch "
+    "yet; the fix-by date for each from CERBERUS's deadline policy; what is overdue; and the exact commands to run on each machine (apt, pip, "
+    "npm, reboot, removing unused kernels). Use it for 'is there a patch for', 'how do I fix', 'what should I patch first', 'when must this be "
+    "fixed', 'what is overdue'.", {
+        "machine": {"type": "string", "description": "Only this machine (Wazuh agent name)"},
+        "cve": {"type": "string", "description": "Only this CVE, e.g. CVE-2025-49844"},
+    })
+
+
+def _remote_tool(servers: list[dict]) -> dict:
+    listing = "; ".join(f"{s['name']} ({s['host']}{', read-only' if not s.get('allow_changes') else ''})" for s in servers)
+    return _fn(
+        "run_server_command",
+        "Run ONE shell command on a registered server over SSH, after an admin approves it. The admin sees the exact command and your reason "
+        "and decides; you then get the output. Use read-only commands to investigate (logs, service status, installed versions, open ports) "
+        "and change things (updates, restarts, reboot) only when the user asked for a fix. Commands that wipe data, stop security tools, edit "
+        "accounts or keys, or are interactive are refused. Servers: " + listing + ".", {
+            "server": {"type": "string", "description": "Server name, address or Wazuh agent name"},
+            "command": {"type": "string", "description": "One single-line, non-interactive command, e.g. sudo journalctl -u ssh --since '1 hour ago' --no-pager | tail -n 100"},
+            "reason": {"type": "string", "description": "One sentence for the approving admin: what this checks or changes, and why"},
+        }, ["server", "command", "reason"])
+
+
 def available_tools(conn) -> list[dict]:
     cfg = get_integration(conn, "grafana")
     extra = [spec for key, spec in GRAFANA_TOOLS if cfg.get("url") and cfg.get(key)]
+    if cfg.get("url") and cfg.get("loki_uid"):
+        extra.append(LOGINS_TOOL)
+        extra.append(SNORT_TOOL)
+    if openappsec.is_ready(cfg):
+        extra.append(OPENAPPSEC_TOOL)
     if wazuh.is_ready(wazuh.settings(conn)):
         extra += WAZUH_TOOLS
     if mailer.is_configured(mailer.config(conn)) and accounts.admin_emails(conn):
         extra.append(REPORT_TOOL)
-    return BASE_TOOLS + extra
+    if wazuh.is_ready(wazuh.settings(conn)):
+        extra.append(PATCH_TOOL)
+    from . import remote
+    servers = remote.settings(conn)
+    usable = [s for s in servers["servers"] if s.get("enabled", True) and s.get("host_key")]
+    if servers["enabled"] and usable:
+        extra.append(_remote_tool(usable))
+    return BASE_TOOLS + extra + [FORECAST_TOOL]
+
+
+def _patch_status(conn, args, actor):
+    from . import patches
+    return patches.summary_for_ai(conn, str(args.get("machine") or "")[:80], str(args.get("cve") or "")[:30])
+
+
+def _forecast(conn, args, actor):
+    from . import predict
+    s = predict.status(conn)
+    return {"last_check": s["last_run"], "result": s["last_result"], "alert_threshold": s["settings"]["alert_min"],
+            "warnings": [{k: f.get(k) for k in ("likelihood", "title", "stage", "target", "attackers", "evidence", "next", "action", "first_seen")} for f in predict.active(conn, 12)]}
 
 
 def _slim(event: dict) -> dict:
@@ -247,6 +340,20 @@ def _local_times(rows: list[dict], keys: tuple, tz_minutes) -> None:
                 pass
 
 
+def _snort_alerts(conn, a, actor):
+    return snort.summary(get_integration(conn, "grafana"), hours=a.get("hours", 1), priority=str(a.get("priority", "")), text=a.get("text", ""), limit=a.get("limit", 15))
+
+
+def _get_logins(conn, a, actor):
+    return grafana.logins(get_integration(conn, "grafana"), host=a.get("host", ""), outcome=a.get("outcome", "success"), user=a.get("user", ""),
+                          hours=store.clamp(a.get("hours"), 1, 168, 24), tz_minutes=store.clamp(a.get("_tz"), -720, 840, 0))
+
+
+def _openappsec_events(conn, a, actor):
+    return openappsec.summary(get_integration(conn, "grafana"), hours=a.get("hours", 24), action=a.get("action", ""),
+                              text=a.get("text", ""), limit=a.get("limit", 15), recorded=openappsec.inventory(conn))
+
+
 def _wazuh_agents(conn, a, actor):
     result = wazuh.agents(wazuh.settings(conn))
     _local_times(result["agents"], ("last_seen",), a.get("_tz"))
@@ -278,10 +385,12 @@ def _query_loki(conn, a, actor):
 
 
 HANDLERS = {
+    "attack_forecast": _forecast, "patch_status": _patch_status,
+    "run_server_command": lambda conn, a, actor: {"error": "Commands can only be run from the live chat, where an admin can approve each one."},
     "search_events": _search_events, "list_incidents": _list_incidents, "get_incident": _get_incident,
     "list_assets": _list_assets, "propose_response_action": _propose,
     "send_report_to_admins": _send_report, "wazuh_summary": _wazuh_summary, "search_wazuh_alerts": _wazuh_search,
-    "wazuh_agents": _wazuh_agents, "wazuh_configuration_assessment": _wazuh_sca,
+    "snort_alerts": _snort_alerts, "get_logins": _get_logins, "openappsec_events": _openappsec_events, "wazuh_agents": _wazuh_agents, "wazuh_configuration_assessment": _wazuh_sca,
     "get_server_health": _server_health, "get_metric_history": _metric_history, "query_prometheus": _query_prometheus, "query_loki": _query_loki,
 }
 

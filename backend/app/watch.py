@@ -25,7 +25,7 @@ DEFAULTS = {
     "enabled": False,
     "interval_minutes": 5,
     "tz_offset": 0,                 # minutes from UTC, captured from the admin's browser
-    "checks": {"targets": True, "probes": True, "disk": True, "memory": True, "cpu": True, "load": True, "log_errors": True},
+    "checks": {"targets": True, "probes": True, "disk": True, "memory": True, "cpu": True, "load": True, "log_errors": True, "tools": True},
     "disk_pct": 90,
     "memory_pct": 90,
     "cpu_pct": 90,
@@ -40,7 +40,7 @@ DEFAULTS = {
     "digest_hour": 8,               # local hour of the daily digest
 }
 CHECK_NAMES = {"targets": "Scrape targets down", "probes": "Web checks down", "disk": "Disk usage", "memory": "Memory usage",
-               "cpu": "CPU usage", "load": "System load", "log_errors": "Error lines in logs"}
+               "cpu": "CPU usage", "load": "System load", "log_errors": "Error lines in logs", "tools": "Security tools reporting"}
 ERROR_LEVELS = "error|err|critical|crit|fatal|emerg|alert|panic"
 POLL_SECONDS = 20
 KEEP_RUNS = 200
@@ -113,7 +113,95 @@ def collect(cfg: dict, s: dict) -> list[dict]:
                         f"{host} logged {count} error-level lines in the last five minutes (limit {s['log_errors_5m']}).", value=count)
         except grafana.GrafanaError as exc:
             log.warning("log error check skipped: %s", exc)
+    if checks.get("tools", True):
+        _tool_health(cfg, add)
     return found
+
+
+# ---------- are the security tools themselves working? ----------
+
+def _tool_health(cfg: dict, add) -> None:
+    """Sensors, agents and log shipping that have gone quiet or are failing. Each check stands alone."""
+    from . import openappsec, snort
+    from .db import get_setting
+
+    def guarded(name, check):
+        try:
+            check()
+        except Exception as exc:  # one source failing must not hide the others
+            log.warning("tool health check %s skipped: %s", name, exc)
+
+    def snort_sensors():
+        day = {g["host"]: n for g, n in snort.counts(cfg, ("host",), 1440, keep=300)}
+        recent = {g["host"]: n for g, n in snort.counts(cfg, ("host",), 20, keep=60)}
+        for host, n in day.items():
+            if host and not recent.get(host):
+                add("sensor", f"snort:{host}", 7, f"Snort on {host} stopped reporting",
+                    f"The Snort sensor on {host} sent {n:,} alerts in the last 24 hours but none in the last 20 minutes. "
+                    "Snort may have stopped, or its alerts are no longer being copied to the log shipper.")
+
+    def waf_agents():
+        live = openappsec.live_agents(cfg)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        for agent_id, a in live.items():
+            seen = datetime.strptime(a["seen"][:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc) if a.get("seen") else None
+            if seen and seen < datetime.now(timezone.utc) - timedelta(hours=6):
+                add("sensor", f"waf:{agent_id}", 7, f"open-appsec agent on {a['host']} has gone quiet",
+                    f"The open-appsec agent {agent_id[:8]} on {a['host']} last wrote anything at {a['seen']}. It may have stopped.")
+        loads: dict[str, int] = {}
+        for e in openappsec.agent_events(cfg):
+            if "Policy Loaded" in e["name"] and e["time"] and e["time"][:19] >= cutoff.strftime("%Y-%m-%dT%H:%M:%S"):
+                loads[e["host"]] = loads.get(e["host"], 0) + 1
+        for host, n in loads.items():
+            if n >= 50:
+                add("sensor", f"waf-policy:{host}", 6, f"open-appsec agent on {host} keeps reloading its policy",
+                    f"The agent on {host} reloaded its policy {n} times in 24 hours. That usually means a policy update keeps failing "
+                    "(check `open-appsec-ctl --status` on the agent for 'Policy load status: Error').")
+
+    def waf_cloud_only():
+        with db() as conn:
+            recorded = openappsec.inventory(conn)
+        if not recorded["assets"]:
+            return
+        reporting = {e["asset"] for e in openappsec.requests(cfg, 24)}
+        through_gateway = {e["asset"] for e in openappsec.all_requests(cfg, 24, recorded) if e.get("via") == "gateway"}
+        for name in sorted(through_gateway - reporting):
+            add("sensor", f"waf-cloud:{name}", 5, f"{name}: firewall events go to the cloud only",
+                f"The web firewall is blocking requests for {name}, but its detailed events are not in the agent's output, so CERBERUS only sees "
+                "the web server's 403s. In the open-appsec portal, give its log trigger agent logging as well.")
+
+    def wazuh_health():
+        from . import wazuh
+        with db() as conn:
+            w = wazuh.settings(conn)
+            last_ok, last = get_setting(conn, "wazuh_last_ok"), get_setting(conn, "wazuh_last_result")
+        if not wazuh.is_ready(w):
+            return
+        if w.get("enabled") and last_ok == "0":
+            add("sensor", "wazuh:pull", 7, "CERBERUS cannot pull alerts from Wazuh", f"The last pull from Wazuh failed: {last}")
+        client = wazuh._Client(w)
+        try:
+            for a in wazuh._agent_rows(client):
+                if a.get("id") != "000" and a.get("status") not in ("active", None):
+                    add("sensor", f"wazuh-agent:{a['name']}", 7, f"Wazuh agent {a['name']} is {str(a['status']).replace('_', ' ')}",
+                        f"The Wazuh agent on {a['name']} ({a.get('ip', '')}) is {a['status']}, so that machine is not being monitored. Last seen {a.get('last_seen', 'unknown')}.")
+        finally:
+            client.close()
+
+    def log_shipping():
+        uid = cfg.get("loki_uid")
+        if not uid:
+            return
+        ask = lambda window: {r["metric"].get("host", ""): float(r["value"][1]) for r in (grafana._get(cfg, f"/api/datasources/proxy/uid/{uid}/loki/api/v1/query", {
+            "query": f'sum by (host) (count_over_time({{host=~".+"}}[{window}]))', "time": int(time.time())}) or {}).get("data", {}).get("result", [])}
+        before, recent = ask("3h"), ask("10m")
+        for host, n in before.items():
+            if host and n > 100 and not recent.get(host):
+                add("sensor", f"logs:{host}", 7, f"Logs from {host} stopped arriving",
+                    f"{host} sent {int(n):,} log lines in the last 3 hours but none in the last 10 minutes. Its log shipper may have stopped.")
+
+    for name, check in (("snort", snort_sensors), ("waf", waf_agents), ("waf-cloud", waf_cloud_only), ("wazuh", wazuh_health), ("logs", log_shipping)):
+        guarded(name, check)
 
 
 def _writeup(conn, new: list[dict], tz_minutes: int) -> str:
@@ -128,7 +216,8 @@ def _writeup(conn, new: list[dict], tz_minutes: int) -> str:
                 "opened, say 'for more than 24 hours'), the most likely cause only if the evidence shows one, and one "
                 "concrete next step. Two sentences per bullet at most. Do not propose response actions.")
     try:
-        return ai.investigate(conn, provider, [{"role": "user", "content": question}], "ai-watch", tz_minutes)["reply"]
+        with ai.usage("watch", "ai-watch"):
+            return ai.investigate(conn, provider, [{"role": "user", "content": question}], "ai-watch", tz_minutes)["reply"]
     except ai.AIError as exc:
         log.warning("watch write-up failed: %s", exc)
         return ""
@@ -263,7 +352,8 @@ def send_digest(conn, s: dict) -> bool:
     provider, text = ai.active_provider(conn), ""
     if provider:
         try:
-            text = ai.brief(provider, "overview", json.dumps(snapshot, default=str), grafana.tz_label(s["tz_offset"]))
+            with ai.usage("digest", "ai-watch"):
+                text = ai.brief(provider, "overview", json.dumps(snapshot, default=str), grafana.tz_label(s["tz_offset"]))
         except ai.AIError as exc:
             log.warning("digest write-up failed: %s", exc)
     if not text:
@@ -298,7 +388,8 @@ def _tick() -> None:
 def _loop() -> None:
     while True:
         time.sleep(POLL_SECONDS)
-        for job in (wazuh.tick, _tick):
+        from . import alerting, dashboard, detections, patches, predict, reports, triage
+        for job in (wazuh.tick, detections.tick, predict.tick, triage.tick, alerting.tick, dashboard.tick, patches.tick, reports.tick, _tick):
             try:
                 job()
             except Exception:  # the scheduler must survive any single bad pass

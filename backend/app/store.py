@@ -230,6 +230,52 @@ def query_incidents(conn, *, status="", min_severity=1, limit=100) -> list[dict]
     return [incident_dict(r) for r in rows]
 
 
+def query_queue(conn, *, status="active", assignee="", verdict="", min_priority=0, limit=200) -> list[dict]:
+    """Incidents ordered by priority (the work queue), with optional filters."""
+    where, params = ["i.demo = 0", "i.priority >= ?"], [clamp(min_priority, 0, 100, 0)]
+    if status == "active":
+        where.append("i.status IN ('open', 'investigating')")
+    elif status == "overdue":
+        where.append("i.status IN ('open', 'investigating') AND i.due_at != '' AND i.due_at < ?")
+        params.append(now())
+    elif status == "unassigned":
+        where.append("i.status IN ('open', 'investigating') AND i.assignee = ''")
+    elif status in INCIDENT_STATUSES:
+        where.append("i.status = ?")
+        params.append(status)
+    if assignee:
+        where.append("i.assignee = ?")
+        params.append(assignee)
+    if verdict:
+        where.append("i.ai_verdict = ?")
+        params.append(verdict)
+    rows = conn.execute(
+        "SELECT i.*, a.name AS asset_name FROM incidents i LEFT JOIN assets a ON a.id = i.asset_id "
+        f"WHERE {' AND '.join(where)} ORDER BY i.priority DESC, i.last_seen DESC LIMIT ?",
+        params + [clamp(limit, 1, 500, 200)]).fetchall()
+    return [incident_dict(r) for r in rows]
+
+
+def triage_stats(conn) -> dict:
+    """Counts for the queue header: by verdict, by status, overdue, unassigned, and response times."""
+    active = "status IN ('open', 'investigating') AND demo = 0"
+    verdicts = {r["ai_verdict"] or "untriaged": r["n"] for r in conn.execute(
+        f"SELECT ai_verdict, COUNT(*) AS n FROM incidents WHERE {active} GROUP BY ai_verdict")}
+    row = conn.execute(
+        f"SELECT COUNT(*) AS open, SUM(assignee = '') AS unassigned, SUM(triaged_at = '') AS untriaged, "
+        f"SUM(due_at != '' AND due_at < ?) AS overdue, SUM(ai_verdict = 'malicious') AS malicious FROM incidents WHERE {active}",
+        (now(),)).fetchone()
+    # Mean hours to acknowledge and to resolve, over incidents closed in the last 7 days.
+    times = conn.execute(
+        "SELECT AVG((julianday(ack_at) - julianday(first_seen)) * 24) AS ack, "
+        "AVG((julianday(resolved_at) - julianday(first_seen)) * 24) AS resolve, COUNT(*) AS closed "
+        "FROM incidents WHERE resolved_at >= ? AND demo = 0", (ago(days=7),)).fetchone()
+    return {"verdicts": verdicts, "open": row["open"] or 0, "unassigned": row["unassigned"] or 0, "untriaged": row["untriaged"] or 0,
+            "overdue": row["overdue"] or 0, "malicious": row["malicious"] or 0,
+            "ack_hours": round(times["ack"], 1) if times["ack"] is not None else None,
+            "resolve_hours": round(times["resolve"], 1) if times["resolve"] is not None else None, "closed_7d": times["closed"] or 0}
+
+
 def get_incident(conn, incident_id: int) -> dict | None:
     row = conn.execute(
         "SELECT i.*, a.name AS asset_name, a.ip AS asset_ip FROM incidents i "
@@ -242,6 +288,12 @@ def get_incident(conn, incident_id: int) -> dict | None:
     inc["events"] = query_events(conn, incident_id=incident_id, limit=200)
     inc["approvals"] = [dict(r) for r in conn.execute(
         "SELECT * FROM approvals WHERE incident_id = ? ORDER BY id DESC", (incident_id,))]
+    try:
+        inc["priority_meta"] = json.loads(inc.get("priority_meta") or "{}")
+    except ValueError:
+        inc["priority_meta"] = {}
+    inc["notes"] = [dict(r) for r in conn.execute(
+        "SELECT id, kind, author, body, created_at FROM incident_notes WHERE incident_id = ? ORDER BY id", (incident_id,))]
     return inc
 
 

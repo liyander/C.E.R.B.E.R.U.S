@@ -6,7 +6,7 @@ Prometheus / Loki queries through Grafana's datasource proxy.
 """
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import httpx
@@ -425,3 +425,64 @@ def query_loki(cfg: dict, logql: str, minutes: int = 60, limit: int = 30) -> dic
             lines.append({"ts_ns": ts, "labels": stream.get("stream", {}), "line": str(line)[:400]})
     lines.sort(key=lambda item: item["ts_ns"], reverse=True)
     return {"backend": "loki", "query": logql, "window_minutes": minutes, "lines": lines[:clamp(limit, 1, 50, 30)]}
+
+
+# ---------- who logged in (SSH), from the servers' own auth logs in Loki ----------
+
+_ACCEPTED = re.compile(r"Accepted (\S+) for (\S+) from (\S+) port \d+")
+_FAILED = re.compile(r"(?:Failed (\S+) for (?:invalid user )?(\S+) from (\S+) port \d+|Invalid user (\S*) from (\S+))")
+
+
+def _same_name(a: str, b: str) -> bool:
+    plain = lambda v: re.sub(r"[^a-z0-9]", "", str(v).lower())
+    return bool(plain(a)) and plain(a) == plain(b)
+
+
+def logins(cfg: dict, *, host: str = "", outcome: str = "success", user: str = "", hours: int = 24, tz_minutes: int = 0) -> dict:
+    """SSH logins to a server: who, from where, how, when. outcome: success | failed."""
+    uid = text(cfg.get("loki_uid"), 80)
+    if not uid:
+        raise GrafanaError("No Loki datasource UID configured")
+    hours = max(1, min(int(hours or 24), 168))
+    failed = outcome == "failed"
+    known = loki_label_values(cfg, "host")
+    wanted = text(host, 120)
+    match = next((h for h in known if h == wanted), None) or next((h for h in known if _same_name(h, wanted)), None)
+    if wanted and not match:
+        raise GrafanaError(f"No server named '{wanted}' sends logs. Servers with logs: {', '.join(known) or 'none'}")
+    selector = '{host="%s"}' % match if match else '{host=~".+"}'
+    logql = selector + (' |~ "Failed \\\\S+ for |Invalid user "' if failed else ' |= "Accepted " |= " for "')
+    end = int(time.time()) + 60
+    data = _get(cfg, f"/api/datasources/proxy/uid/{uid}/loki/api/v1/query_range", {
+        "query": logql, "start": (end - hours * 3600) * 10**9, "end": end * 10**9, "limit": 5000, "direction": "backward"}).get("data") or {}
+    local = lambda ns: f"{datetime.fromtimestamp(ns / 1e9, timezone.utc) + timedelta(minutes=tz_minutes):%Y-%m-%d %H:%M:%S} {tz_label(tz_minutes)}"
+    groups: dict[tuple, dict] = {}
+    total = 0
+    for stream in data.get("result", []):
+        server = (stream.get("stream") or {}).get("host", "")
+        for ns, line in stream.get("values", []):
+            found = (_FAILED if failed else _ACCEPTED).search(line)
+            if not found:
+                continue
+            if failed:
+                method, who, source = (found.group(1), found.group(2), found.group(3)) if found.group(2) is not None else ("unknown user", found.group(4), found.group(5))
+            else:
+                method, who, source = found.groups()
+            if user and not _same_name(who, user):
+                continue
+            total += 1
+            row = groups.setdefault((server, who, source, method), {"count": 0, "first": int(ns), "last": int(ns)})
+            row["count"] += 1
+            row["first"], row["last"] = min(row["first"], int(ns)), max(row["last"], int(ns))
+    ranked = sorted(groups.items(), key=lambda kv: (kv[1]["last"] if not failed else kv[1]["count"]), reverse=True)
+    lines = sum(len(s.get("values", [])) for s in data.get("result", []))
+    shown = 15 if failed else 30
+    return {
+        "backend": "loki", "what": f"{'failed' if failed else 'successful'} SSH logins", "server": match or "all servers", "window_hours": hours,
+        "total": total, "distinct_user_count": len({k[1] for k in groups}), "distinct_users": sorted({k[1] for k in groups})[:25], "distinct_sources": len({k[2] for k in groups}),
+        "logins": [{"server": k[0], "user": k[1], "from": k[2], "method": k[3], "times": v["count"], "first": local(v["first"]), "last": local(v["last"])} for k, v in ranked[:shown]],
+        "note": " ".join(filter(None, [
+            "This is SSH access to the server itself, read from its auth log.",
+            "Logins to web applications on it (for example the LMS site) are not in these logs: the web access log shows the login page being used, not who succeeded.",
+            f"Only {shown} of {len(ranked)} user and address combinations are listed, {'busiest' if failed else 'most recent'} first." if len(ranked) > shown else "",
+            "The period holds more log lines than could be read in one go, so older ones are missing; ask for fewer hours." if lines >= 5000 else ""]))}

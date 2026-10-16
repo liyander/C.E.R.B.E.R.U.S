@@ -226,7 +226,10 @@ def tick() -> None:
     with db() as conn:
         cfg = settings(conn)
         last = get_setting(conn, "wazuh_last_sync")
-    if cfg["enabled"] and is_ready(cfg) and (not last or last <= store.ago(minutes=max(1, int(cfg["poll_minutes"])))):
+        failed = get_setting(conn, "wazuh_last_ok") == "0"
+    # After a failure (a network blip, Wazuh restarting) try again soon instead of waiting a whole interval.
+    every = min(2, int(cfg["poll_minutes"])) if failed else int(cfg["poll_minutes"])
+    if cfg["enabled"] and is_ready(cfg) and (not last or last <= store.ago(minutes=max(1, every))):
         result = sync("schedule")
         if not result["ok"]:
             log.warning("wazuh sync failed: %s", result["error"])

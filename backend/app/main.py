@@ -1,5 +1,7 @@
 """CERBERUS API + static web UI."""
 import hmac
+import queue
+import threading
 import json
 import secrets
 import time
@@ -11,11 +13,15 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import accounts, ai, apps, auth, demo, grafana, mailer, store, tools, watch, wazuh
+from . import accounts, ai, alerting, apps, auth, dashboard, demo, detections, grafana, insights, openappsec, patches, predict, remote, reports, response, triage, mailer, store, tools, watch, wazuh
 from .db import ROOT, audit, db, get_integration, get_setting, init_db, now, set_integration, set_setting
 
 WEB_DIR = ROOT / "web"
 VERSION = "0.2.0"
+# Status for "a system CERBERUS depends on failed" (the AI model, Grafana, Wazuh, the mail server).
+# Deliberately not 502 or 504: proxies and tunnels in front of CERBERUS replace those responses with
+# their own error page, which throws away the explanation the user needs to see.
+UPSTREAM_FAILED = 424
 
 
 @asynccontextmanager
@@ -70,7 +76,15 @@ class ChatBody(BaseModel):
 
 
 class BriefBody(BaseModel):
-    kind: str = Field(pattern=r"^(logs|log_line|infrastructure|overview)$")
+    kind: str = Field(pattern=r"^(logs|log_line|infrastructure|overview|app_page|app_row|incidents|incident|events|assets|approvals|audit|insight)$")
+    app: str = Field(default="", max_length=40)
+    page: str = Field(default="", max_length=120)
+    params: dict[str, str] = Field(default_factory=dict)
+    item_id: int = Field(default=0, ge=0)
+    title: str = Field(default="", max_length=200)
+    source: str = Field(default="", max_length=80)
+    min_severity: int = Field(default=1, ge=1, le=10)
+    status: str = Field(default="active", max_length=30)
     query: str = Field(default="", max_length=1000)
     minutes: int = Field(default=15, ge=5, le=1440)
     start: str = Field(default="", max_length=40)
@@ -108,6 +122,11 @@ class WazuhBody(BaseModel):
     min_level: int = Field(default=7, ge=0, le=15)
     exclude_rules: str = Field(default="", max_length=500, pattern=r"^[0-9,; ]*$")
     poll_minutes: int = Field(default=2, ge=1, le=60)
+
+
+class OpenAppsecBody(BaseModel):
+    assets: str = Field(default="", max_length=20000)
+    agents: str = Field(default="", max_length=20000)
 
 
 class FindingBody(BaseModel):
@@ -148,6 +167,7 @@ class DecisionBody(BaseModel):
 
 class IncidentPatch(BaseModel):
     status: str
+    reason: str = Field(default="", max_length=500)
 
 
 @app.get("/api/v1/health")
@@ -170,7 +190,7 @@ def overview(user=User):
             "open_incidents": one(f"SELECT COUNT(*) FROM incidents WHERE {active}"),
             "critical": one(f"SELECT COUNT(*) FROM incidents WHERE {active} AND severity >= 9"),
             "high": one(f"SELECT COUNT(*) FROM incidents WHERE {active} AND severity BETWEEN 7 AND 8"),
-            "pending_approvals": one("SELECT COUNT(*) FROM approvals WHERE status = 'pending'"),
+            "pending_approvals": one("SELECT (SELECT COUNT(*) FROM approvals WHERE status = 'pending') + (SELECT COUNT(*) FROM server_commands WHERE status = 'pending' AND expires_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"),
             "medium": one(f"SELECT COUNT(*) FROM incidents WHERE {active} AND severity BETWEEN 4 AND 6"),
             "low": one(f"SELECT COUNT(*) FROM incidents WHERE {active} AND severity < 4"),
             "events_24h": one("SELECT COUNT(*) FROM events WHERE ts >= ?", store.ago(hours=24)),
@@ -219,7 +239,7 @@ def logs_explore(query: str = "", minutes: int = 60, limit: int = 200, start: st
     try:
         result = grafana.loki_explore(cfg, query, minutes, limit, start, end)
     except grafana.GrafanaError as exc:
-        raise HTTPException(502, str(exc))
+        raise HTTPException(UPSTREAM_FAILED, str(exc))
     result["patterns"] = grafana.log_patterns(result["lines"])
     return result
 
@@ -232,7 +252,7 @@ def logs_context(body: ContextBody, user=User):
     try:
         return grafana.loki_context(cfg, body.labels, body.ns)
     except grafana.GrafanaError as exc:
-        raise HTTPException(502, str(exc))
+        raise HTTPException(UPSTREAM_FAILED, str(exc))
 
 
 # ---------- Wazuh ----------
@@ -266,9 +286,34 @@ def wazuh_test(user=Admin):
         try:
             result = wazuh.test(cfg)
         except wazuh.WazuhError as exc:
-            raise HTTPException(502, str(exc))
+            raise HTTPException(UPSTREAM_FAILED, str(exc))
         set_integration(conn, "wazuh", {**cfg, "mode": result["mode"]})
     return result
+
+
+@app.get("/api/v1/integrations/openappsec")
+def openappsec_get(user=Admin):
+    """What an admin recorded from the open-appsec portal, plus the agent IDs seen live so they can be copied in."""
+    with db() as conn:
+        recorded, cfg = openappsec.inventory(conn), get_integration(conn, "grafana")
+    seen = []
+    if openappsec.is_ready(cfg):
+        try:
+            seen = [{"id": agent_id, "server": a["host"]} for agent_id, a in openappsec.live_agents(cfg).items()]
+        except grafana.GrafanaError:
+            pass
+    return {"assets": openappsec.format_lines(recorded["assets"], openappsec.ASSET_FIELDS),
+            "agents": openappsec.format_lines(recorded["agents"], openappsec.AGENT_FIELDS), "ready": openappsec.is_ready(cfg), "seen_agents": seen}
+
+
+@app.put("/api/v1/integrations/openappsec")
+def openappsec_save(body: OpenAppsecBody, user=Admin):
+    assets = openappsec.parse_lines(body.assets, openappsec.ASSET_FIELDS)
+    agents = openappsec.parse_lines(body.agents, openappsec.AGENT_FIELDS)
+    with db() as conn:
+        set_integration(conn, "openappsec", {"assets": assets, "agents": agents})
+        audit(conn, user["username"], "integration.openappsec_saved", {"assets": len(assets), "agents": len(agents)})
+    return {"assets": len(assets), "agents": len(agents)}
 
 
 @app.post("/api/v1/integrations/wazuh/sync")
@@ -318,6 +363,13 @@ def watch_digest(user=Admin):
     return {"ok": True}
 
 
+@app.get("/api/v1/ai/sources")
+def ai_sources(user=User):
+    """The systems that can be tagged with @ in the chat."""
+    with db() as conn:
+        return ai.sources(conn)
+
+
 @app.post("/api/v1/ai/brief")
 def ai_brief(body: BriefBody, user=User):
     """A short AI-written briefing. The server collects the data itself; the model gets no tools."""
@@ -327,8 +379,47 @@ def ai_brief(body: BriefBody, user=User):
         cfg = get_integration(conn, "grafana")
         audit(conn, user["username"], "ai.brief", {"kind": body.kind, "query": body.query[:300]})
         try:
+            task = {"app_page": "page", "app_row": "item"}.get(body.kind, body.kind)
             if body.kind == "log_line":
                 data = json.dumps({"labels": body.labels, "line": body.line})
+            elif body.kind == "app_page":
+                try:
+                    data = json.dumps(apps.digest(apps.render(conn, body.app, body.page, body.params)), default=str)
+                except KeyError:
+                    raise HTTPException(404, "That page does not exist")
+                except apps.NotConnected as exc:
+                    raise HTTPException(409, f"{exc} is not connected")
+                except apps.errors() as exc:
+                    raise HTTPException(UPSTREAM_FAILED, str(exc))
+            elif body.kind == "insight":
+                view = insights.PAGES.get(body.page)
+                if not view or (body.page == "ai-usage" and user["role"] != "admin"):
+                    raise HTTPException(404, "That page does not exist")
+                data = json.dumps(apps.digest(view(conn, body.params)), default=str)
+                task = "ip" if body.page == "ip" and body.params.get("ip") else "forecast" if body.page == "forecast" else "page"
+            elif body.kind == "app_row":
+                data = json.dumps({"from_page": body.title, "item": body.line})
+            elif body.kind == "incidents":
+                status = body.status if body.status in ("active", "resolved", "false_positive") else ""
+                data = json.dumps({"showing": status or "all", "incidents": store.query_incidents(conn, status=status, limit=25)}, default=str)
+            elif body.kind == "incident":
+                incident = store.get_incident(conn, body.item_id)
+                if not incident:
+                    raise HTTPException(404, "Incident not found")
+                data = json.dumps(incident, default=str)
+            elif body.kind == "events":
+                data = json.dumps({"filters": {"search": body.query, "source": body.source, "min_severity": body.min_severity},
+                                   "last_24h": {k: v for k, v in store.event_stats(conn, hours=24, q=body.query, source=body.source, min_severity=body.min_severity).items() if k != "hourly"},
+                                   "newest_events": store.query_events(conn, q=body.query, source=body.source, min_severity=body.min_severity, limit=50)}, default=str)
+            elif body.kind == "assets":
+                data = json.dumps(list_assets(user)[:60], default=str)
+            elif body.kind == "approvals":
+                data = json.dumps([a for a in list_approvals(user) if a.get("status") == "pending"][:20] or "There are no pending approvals.", default=str)
+            elif body.kind == "audit":
+                if user["role"] != "admin":
+                    raise HTTPException(403, "Only admins can read the audit log")
+                rows = conn.execute("SELECT ts, actor, action, detail FROM audit_logs ORDER BY id DESC LIMIT 120").fetchall()
+                data = json.dumps([{**dict(r), "detail": str(r["detail"] or "")[:160]} for r in rows], default=str)
             elif body.kind == "logs":
                 found = grafana.loki_explore(cfg, body.query, body.minutes, 200, body.start, body.end)
                 levels = {k: sum(v[k] for v in found["volume"]) for k in grafana.LOG_LEVELS}
@@ -347,11 +438,12 @@ def ai_brief(body: BriefBody, user=User):
                 except grafana.GrafanaError:
                     snapshot["infrastructure"] = "not connected"
                 data = json.dumps(snapshot, default=str)
-            return {"text": ai.brief(provider, body.kind, data, tz), "model": provider["model"]}
+            with ai.usage("brief", user["username"]):
+                return {"text": ai.brief(provider, task, data, tz), "model": provider["model"]}
         except grafana.GrafanaError as exc:
-            raise HTTPException(502, str(exc))
+            raise HTTPException(UPSTREAM_FAILED, str(exc))
         except ai.AIError as exc:
-            raise HTTPException(502, str(exc))
+            raise HTTPException(UPSTREAM_FAILED, str(exc))
 
 
 @app.get("/api/v1/logs/labels")
@@ -365,9 +457,281 @@ def logs_labels(user=User):
             out[name] = grafana.loki_label_values(cfg, name)
         except grafana.GrafanaError as exc:
             if name == "job":
-                raise HTTPException(502, str(exc))
+                raise HTTPException(UPSTREAM_FAILED, str(exc))
             out[name] = []
     return out
+
+
+class DetectionsBody(BaseModel):
+    enabled: bool = True
+    snort: bool = True
+    snort_priority: int = Field(default=1, ge=1, le=3)
+    waf: bool = True
+    waf_mode: str = Field(default="detected", pattern=r"^(detected|critical|all)$")
+    multi_source: bool = True
+    multi_min: int = Field(default=2, ge=2, le=4)
+    interval_minutes: int = Field(default=5, ge=1, le=60)
+
+
+class ForecastBody(BaseModel):
+    enabled: bool = True
+    interval_minutes: int = Field(default=10, ge=5, le=60)
+    alert_min: int = Field(default=70, ge=40, le=95)
+    notify_in_app: bool = True
+    email: bool = True
+    incident: bool = True
+    ai: bool = True
+
+
+class ServerBody(BaseModel):
+    id: str = Field(default="", max_length=20)
+    name: str = Field(min_length=1, max_length=60)
+    host: str = Field(min_length=1, max_length=200)
+    port: int = Field(default=22, ge=1, le=65535)
+    username: str = Field(min_length=1, max_length=60)
+    auth: str = Field(default="key", pattern=r"^(key|password)$")
+    password: str = Field(default="", max_length=200)
+    sudo_password: str = Field(default="", max_length=200)
+    clear_sudo_password: bool = False
+    agent: str = Field(default="", max_length=120)
+    allow_changes: bool = False
+    enabled: bool = True
+
+
+class CommandDecisionBody(BaseModel):
+    decision: str = Field(pattern=r"^(approved|denied)$")
+    note: str = Field(default="", max_length=500)
+
+
+class PlanCommandsBody(BaseModel):
+    agent: str = Field(min_length=1, max_length=120)
+
+
+class ReportSettingsBody(BaseModel):
+    enabled: bool = False
+    frequency: str = Field(default="weekly", pattern=r"^(daily|weekly)$")
+    weekday: int = Field(default=0, ge=0, le=6)
+    hour: int = Field(default=8, ge=0, le=23)
+    send_to_admins: bool = True
+    extra_recipients: str = Field(default="", max_length=1000)
+    ai_summary: bool = True
+
+
+class ReportRunBody(BaseModel):
+    days: int = Field(default=7, ge=1, le=31)
+
+
+@app.get("/api/v1/insights/{name}")
+def insight_page(name: str, request: Request, user=User):
+    """Cross-source views: one IP, asset risk, vulnerability priority and (admins) AI usage."""
+    view = insights.PAGES.get(name)
+    if not view or (name == "ai-usage" and user["role"] != "admin"):
+        raise HTTPException(404, "That page does not exist")
+    with db() as conn:
+        return view(conn, {k: str(v)[:200] for k, v in request.query_params.items()})
+
+
+@app.get("/api/v1/integrations/detections")
+def detections_get(user=Admin):
+    with db() as conn:
+        return detections.status(conn)
+
+
+@app.put("/api/v1/integrations/detections")
+def detections_save(body: DetectionsBody, user=Admin):
+    with db() as conn:
+        saved = detections.save_settings(conn, body.model_dump())
+        audit(conn, user["username"], "integration.detections_saved", saved)
+        return detections.status(conn)
+
+
+@app.post("/api/v1/integrations/detections/run")
+def detections_run(user=Admin):
+    return detections.run("manual")
+
+
+@app.get("/api/v1/integrations/forecast")
+def forecast_get(user=Admin):
+    with db() as conn:
+        return predict.status(conn)
+
+
+@app.put("/api/v1/integrations/forecast")
+def forecast_save(body: ForecastBody, user=Admin):
+    with db() as conn:
+        saved = predict.save_settings(conn, body.model_dump())
+        audit(conn, user["username"], "integration.forecast_saved", saved)
+        return predict.status(conn)
+
+
+@app.post("/api/v1/forecast/run")
+def forecast_run(user=Admin):
+    result = predict.run("manual")
+    with db() as conn:
+        audit(conn, user["username"], "forecast.run", {k: result.get(k) for k in ("warnings", "alerted")})
+    return result
+
+
+@app.get("/api/v1/dashboard")
+def dashboard_view(user=User):
+    with db() as conn:
+        return dashboard.vitals(conn)
+
+
+@app.get("/api/v1/alert-rules")
+def alert_rules(user=Admin):
+    with db() as conn:
+        return alerting.page(conn)
+
+
+@app.post("/api/v1/alert-rules")
+def alert_rule_save(body: dict = Body(...), user=Admin):
+    with db() as conn:
+        try:
+            rule = alerting.save(conn, body, user["username"])
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        # A new or raised rule is checked straight away rather than at the next pass.
+        fired = alerting.evaluate(conn, only=rule["id"]) if rule["enabled"] else []
+        return {"rule": rule, "fired": fired}
+
+
+@app.delete("/api/v1/alert-rules/{rule_id}")
+def alert_rule_delete(rule_id: str, user=Admin):
+    with db() as conn:
+        alerting.delete(conn, rule_id, user["username"])
+        return {"ok": True}
+
+
+@app.post("/api/v1/alert-rules/{rule_id}/test")
+def alert_rule_test(rule_id: str, user=Admin):
+    with db() as conn:
+        try:
+            return alerting.test(conn, rule_id, user["username"])
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        except mailer.MailError as exc:
+            raise HTTPException(UPSTREAM_FAILED, str(exc))
+
+
+@app.get("/api/v1/servers")
+def servers_get(user=Admin):
+    with db() as conn:
+        return {**remote.public_view(conn), "commands": remote.history(conn, 80)}
+
+
+@app.get("/api/v1/servers/agents")
+def servers_agents(user=Admin):
+    """Wazuh agents, so a server can be linked to its patch plan. Empty when Wazuh is not connected."""
+    with db() as conn:
+        w = wazuh.settings(conn)
+    if not wazuh.is_ready(w):
+        return []
+    try:
+        rows = insights._cached(("server-agents",), 300, lambda: wazuh.agents(w)["agents"])
+    except Exception:  # the form still works with a typed name
+        return []
+    return [{k: a.get(k, "") for k in ("name", "ip", "os", "status")} for a in rows if a.get("id") != "000"]
+
+
+@app.put("/api/v1/servers/settings")
+def servers_toggle(body: dict = Body(...), user=Admin):
+    with db() as conn:
+        remote.set_enabled(conn, bool(body.get("enabled")), user["username"])
+        return remote.public_view(conn)
+
+
+@app.post("/api/v1/servers")
+def servers_save(body: ServerBody, user=Admin):
+    with db() as conn:
+        try:
+            saved = remote.save_server(conn, body.model_dump(), user["username"])
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        return {"id": saved["id"], "name": saved["name"]}
+
+
+@app.delete("/api/v1/servers/{server_id}")
+def servers_delete(server_id: str, user=Admin):
+    with db() as conn:
+        remote.delete_server(conn, server_id, user["username"])
+        return {"ok": True}
+
+
+@app.post("/api/v1/servers/{server_id}/test")
+def servers_test(server_id: str, user=Admin):
+    with db() as conn:
+        try:
+            return remote.test(conn, server_id, user["username"])
+        except remote.RemoteError as exc:
+            raise HTTPException(UPSTREAM_FAILED, str(exc))
+
+
+@app.get("/api/v1/commands")
+def commands_list(status: str = "", user=Admin):
+    with db() as conn:
+        return remote.history(conn, 100, status if status in ("pending", "approved", "running", "done", "failed", "denied", "expired") else "")
+
+
+@app.post("/api/v1/commands/{command_id}/decision")
+def commands_decide(command_id: int, body: CommandDecisionBody, user=Admin):
+    with db() as conn:
+        try:
+            return remote.decide(conn, command_id, body.decision, body.note, user["username"])
+        except remote.RemoteError as exc:
+            raise HTTPException(409, str(exc))
+
+
+@app.post("/api/v1/commands/plan")
+def commands_from_plan(body: PlanCommandsBody, user=Admin):
+    """Queue a machine's patch plan as separate commands, each waiting for its own approval."""
+    with db() as conn:
+        commands = patches.runnable(conn, body.agent)
+        if not commands:
+            raise HTTPException(400, f"Nothing to patch on {body.agent}, or patch availability is still being checked.")
+        try:
+            made = remote.propose_plan(conn, body.agent, commands, f"Patch plan for {body.agent}", user["username"])
+        except remote.RemoteError as exc:
+            raise HTTPException(400, str(exc))
+        errors = [m["error"] for m in made if "error" in m]
+        if errors and len(errors) == len(made):
+            raise HTTPException(400, errors[0])
+        return {"queued": [m for m in made if "id" in m], "errors": errors}
+
+
+@app.get("/api/v1/reports")
+def reports_get(user=Admin):
+    with db() as conn:
+        return reports.status(conn)
+
+
+@app.put("/api/v1/reports")
+def reports_save(body: ReportSettingsBody, user=Admin):
+    with db() as conn:
+        try:
+            reports.save_settings(conn, body.model_dump())
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        audit(conn, user["username"], "reports.settings_saved", body.model_dump())
+        return reports.status(conn)
+
+
+@app.post("/api/v1/reports/preview")
+def reports_preview(body: ReportRunBody, user=Admin):
+    with db() as conn:
+        markdown, _ = reports.build_markdown(conn, body.days, reports.settings(conn)["ai_summary"])
+        return {"markdown": markdown}
+
+
+@app.post("/api/v1/reports/send")
+def reports_send(body: ReportRunBody, user=Admin):
+    with db() as conn:
+        try:
+            result = reports.send(conn, user["username"], body.days)
+        except mailer.MailError as exc:
+            raise HTTPException(UPSTREAM_FAILED, str(exc))
+        audit(conn, user["username"], "reports.sent", {"days": body.days, "to": result["sent_to"]})
+        return result
 
 
 @app.get("/api/v1/apps")
@@ -388,7 +752,7 @@ def apps_page(app_id: str, page_id: str, request: Request, user=User):
         except apps.NotConnected as exc:
             return {"app": app_id, "page": page_id, "connected": False, "app_name": str(exc)}
         except apps.errors() as exc:
-            raise HTTPException(502, str(exc))
+            raise HTTPException(UPSTREAM_FAILED, str(exc))
 
 
 @app.get("/api/v1/infrastructure")
@@ -399,13 +763,25 @@ def infrastructure(user=User):
     try:
         return grafana.server_health(cfg)
     except grafana.GrafanaError as exc:
-        raise HTTPException(502, str(exc))
+        raise HTTPException(UPSTREAM_FAILED, str(exc))
 
 
 @app.get("/api/v1/incidents")
 def list_incidents(status: str = "", user=User):
     with db() as conn:
         return store.query_incidents(conn, status=status, limit=200)
+
+
+@app.get("/api/v1/incidents/queue")
+def incident_queue(status: str = "active", assignee: str = "", verdict: str = "", user=User):
+    with db() as conn:
+        incidents = store.query_queue(conn, status=status, assignee=assignee, verdict=verdict)
+        stats = store.triage_stats(conn)
+        # Right after launch priorities are still 0; fill them in in the background.
+        if stats["open"] and incidents and max((i["priority"] for i in incidents), default=0) == 0:
+            triage.kick_rescore()
+        return {"incidents": incidents, "stats": stats, "settings": triage.settings(conn),
+                "team": [r["username"] for r in conn.execute("SELECT username FROM users WHERE disabled = 0 ORDER BY username")]}
 
 
 @app.get("/api/v1/incidents/{incident_id}")
@@ -420,14 +796,114 @@ def incident_detail(incident_id: int, user=User):
 
 @app.patch("/api/v1/incidents/{incident_id}")
 def incident_update(incident_id: int, body: IncidentPatch, user=User):
-    if body.status not in store.INCIDENT_STATUSES:
-        raise HTTPException(422, "Unknown status")
     with db() as conn:
-        cur = conn.execute("UPDATE incidents SET status = ? WHERE id = ?", (body.status, incident_id))
-        if not cur.rowcount:
+        try:
+            return triage.set_status(conn, incident_id, body.status, getattr(body, "reason", "") or "", user["username"])
+        except ValueError as exc:
+            raise HTTPException(404 if "No such" in str(exc) else 422, str(exc))
+
+
+@app.post("/api/v1/incidents/{incident_id}/assign")
+def incident_assign(incident_id: int, body: dict = Body(...), user=User):
+    with db() as conn:
+        try:
+            return triage.assign(conn, incident_id, body.get("assignee", ""), user["username"])
+        except ValueError as exc:
+            raise HTTPException(404 if "No such incident" in str(exc) else 400, str(exc))
+
+
+@app.post("/api/v1/incidents/{incident_id}/note")
+def incident_note(incident_id: int, body: dict = Body(...), user=User):
+    with db() as conn:
+        try:
+            return triage.add_note(conn, incident_id, user["username"], body.get("body", ""))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
+
+@app.get("/api/v1/incidents/{incident_id}/response")
+def incident_response(incident_id: int, user=User):
+    with db() as conn:
+        inc = store.get_incident(conn, incident_id)
+        if not inc:
             raise HTTPException(404, "Incident not found")
-        audit(conn, user["username"], "incident.status", {"incident_id": incident_id, "status": body.status})
-    return {"ok": True}
+        return {"available": response.available(conn, inc), "playbook": response.playbook_for(inc),
+                "commands": response.incident_commands(conn, incident_id)}
+
+
+@app.post("/api/v1/incidents/{incident_id}/respond")
+def incident_respond(incident_id: int, body: dict = Body(...), user=User):
+    with db() as conn:
+        try:
+            return response.run_action(conn, incident_id, str(body.get("action", "")), str(body.get("server", "")), user["username"])
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
+
+@app.post("/api/v1/incidents/{incident_id}/playbook")
+def incident_playbook_step(incident_id: int, body: dict = Body(...), user=User):
+    """Propose one playbook step: a read-only check, or an action, for approval."""
+    with db() as conn:
+        inc = store.get_incident(conn, incident_id)
+        if not inc:
+            raise HTTPException(404, "Incident not found")
+        pb = response.playbook_for(inc)
+        try:
+            step = pb["steps"][int(body.get("index", -1))]
+        except (ValueError, IndexError, TypeError):
+            raise HTTPException(400, "No such step")
+        server = str(body.get("server", ""))
+        try:
+            if step.get("action"):
+                return response.run_action(conn, incident_id, step["action"], server, user["username"])
+            if step.get("command"):
+                result = remote.propose(conn, server, step["command"], f"Playbook step: {step['text']} (incident {inc['ref']})",
+                                        f"{user['username']} (incident {inc['ref']})", origin="plan", incident_id=incident_id, action="playbook")
+                if "error" in result:
+                    raise HTTPException(400, result["error"])
+                triage._note(conn, incident_id, "action", user["username"], f"Proposed playbook step on {result['server']} (command #{result['id']}): {step['text']}")
+                return result
+            raise HTTPException(400, "This step is a note or a link, not a command")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
+
+@app.post("/api/v1/incidents/{incident_id}/closure")
+def incident_closure(incident_id: int, user=User):
+    with db() as conn:
+        provider = _require_provider(conn)
+        try:
+            text = triage.closure_report(conn, provider, incident_id, user["username"])
+        except ValueError as exc:
+            raise HTTPException(404, str(exc))
+        except ai.AIError as exc:
+            raise HTTPException(UPSTREAM_FAILED, str(exc))
+    return {"report": text}
+
+
+@app.post("/api/v1/incidents/{incident_id}/triage")
+def incident_triage(incident_id: int, user=User):
+    with db() as conn:
+        provider = _require_provider(conn)
+        if not store.get_incident(conn, incident_id):
+            raise HTTPException(404, "Incident not found")
+        try:
+            verdict = triage.triage_one(conn, provider, incident_id, user["username"])
+        except ai.AIError as exc:
+            raise HTTPException(UPSTREAM_FAILED, str(exc))
+    return verdict or {"error": "nothing to triage"}
+
+
+@app.get("/api/v1/triage/settings")
+def triage_settings(user=Admin):
+    with db() as conn:
+        return triage.settings(conn)
+
+
+@app.put("/api/v1/triage/settings")
+def triage_settings_save(body: dict = Body(...), user=Admin):
+    with db() as conn:
+        return triage.save_settings(conn, body, user["username"])
 
 
 @app.get("/api/v1/assets")
@@ -564,7 +1040,7 @@ def models_preview(body: ModelsPreviewBody, user=Admin):
     try:
         return {"models": ai.list_models({"base_url": base_url, "api_key": key})}
     except ai.AIError as exc:
-        raise HTTPException(502, str(exc))
+        raise HTTPException(UPSTREAM_FAILED, str(exc))
 
 
 def _require_provider(conn) -> dict:
@@ -640,19 +1116,49 @@ def ai_chat_stream(body: ChatBody, user=User):
             audit(conn, user["username"], "ai.query", {"question": body.message[:500], "conversation_id": conversation_id})
             history = [{"role": m["role"], "content": m["content"][:8000]} for m in messages[-HISTORY_FOR_MODEL:]]
             try:
-                for step in ai.investigate_steps(conn, provider, history, user["username"], body.tz_offset):
-                    if step["type"] == "final":
-                        answer = {"role": "assistant", "content": step["reply"], "trace": step["trace"],
-                                  "model": step["model"], "tools_supported": step["tools_supported"],
-                                  "seconds": round(time.monotonic() - started)}
-                        messages.append(answer)
-                        _store_messages(conn, conversation_id, messages)
-                        step = {"type": "final", "conversation_id": conversation_id, "message": answer}
-                    yield line(step)
+                with ai.usage("chat", user["username"]):
+                    for step in ai.investigate_steps(conn, provider, history, user["username"], body.tz_offset, commands=True):
+                        if step["type"] == "final":
+                            answer = {"role": "assistant", "content": step["reply"], "trace": step["trace"],
+                                      "model": step["model"], "tools_supported": step["tools_supported"],
+                                      "seconds": round(time.monotonic() - started)}
+                            messages.append(answer)
+                            _store_messages(conn, conversation_id, messages)
+                            step = {"type": "final", "conversation_id": conversation_id, "message": answer}
+                        yield line(step)
             except ai.AIError as exc:
                 yield line({"type": "error", "detail": str(exc)})
 
-    return StreamingResponse(steps(), media_type="application/x-ndjson",
+    def with_heartbeat():
+        """Run the work in the background and send a small 'still working' line every few seconds.
+
+        A slow model can think for minutes without producing anything. Proxies and tunnels close a
+        connection that stays silent that long, which the user would see as a failed answer.
+        """
+        outbox: queue.Queue = queue.Queue()
+
+        def work():
+            try:
+                for item in steps():
+                    outbox.put(item)
+            except Exception as exc:  # never leave the browser waiting on a crashed worker
+                outbox.put(line({"type": "error", "detail": f"The analyst stopped unexpectedly: {exc}"[:300]}))
+            finally:
+                outbox.put(None)
+
+        threading.Thread(target=work, daemon=True).start()
+        began = time.monotonic()
+        while True:
+            try:
+                item = outbox.get(timeout=10)
+            except queue.Empty:
+                yield line({"type": "waiting", "seconds": round(time.monotonic() - began)})
+                continue
+            if item is None:
+                return
+            yield item
+
+    return StreamingResponse(with_heartbeat(), media_type="application/x-ndjson",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
@@ -724,7 +1230,7 @@ def incident_investigate(incident_id: int, user=User):
             result = ai.investigate(conn, provider, [{"role": "user", "content": ai.incident_prompt(inc)}],
                                     user["username"])
         except ai.AIError as exc:
-            raise HTTPException(502, str(exc))
+            raise HTTPException(UPSTREAM_FAILED, str(exc))
         meta = f"{provider['model']} · {now()} · {len(result['trace'])} evidence queries"
         conn.execute("UPDATE incidents SET summary = ?, summary_meta = ? WHERE id = ?",
                      (result["reply"], meta, incident_id))
@@ -761,7 +1267,7 @@ def grafana_test(user=Admin):
     try:
         return grafana.test_connection(cfg)
     except grafana.GrafanaError as exc:
-        raise HTTPException(502, str(exc))
+        raise HTTPException(UPSTREAM_FAILED, str(exc))
 
 
 @app.post("/api/v1/integrations/ingest-token/rotate")

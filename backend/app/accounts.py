@@ -6,6 +6,11 @@ from pydantic import BaseModel, Field
 from . import auth, mailer
 from .db import audit, db, now, set_integration
 
+# Status for "a system CERBERUS depends on failed" (the AI model, Grafana, Wazuh, the mail server).
+# Deliberately not 502 or 504: proxies and tunnels in front of CERBERUS replace those responses with
+# their own error page, which throws away the explanation the user needs to see.
+UPSTREAM_FAILED = 424
+
 router = APIRouter(prefix="/api/v1")
 User = Depends(auth.current_user)
 Admin = Depends(auth.require_admin)
@@ -431,7 +436,7 @@ def email_test(admin=Admin):
         try:
             mailer.send(conn, "test", [admin["email"]], mailer.test_email(admin["username"]), wait=True)
         except mailer.MailError as exc:
-            raise HTTPException(502, f"Could not send: {exc}")
+            raise HTTPException(UPSTREAM_FAILED, f"Could not send: {exc}")
     return {"ok": True, "to": admin["email"]}
 
 
