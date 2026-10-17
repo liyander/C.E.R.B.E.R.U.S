@@ -24,8 +24,6 @@ EMAIL_RE = re.compile(r"^[^@\s<>\"',;]+@[^@\s<>\"',;]+\.[^@\s<>\"',;]+$")
 FONT = "font-family:Segoe UI,Helvetica,Arial,sans-serif"
 LOGO_CID = "cerberus-logo"
 ASSETS = Path(__file__).parent / "assets"
-# Images referenced from templates as cid:<name>; attached inside each message that uses them,
-# so they show without the reader having to "display images".
 IMAGES = {f"banner-{p.stem}": (p.read_bytes(), "jpeg") for p in sorted((ASSETS / "banners").glob("*.jpg"))}
 if (ASSETS / "logo.png").exists():
     IMAGES[LOGO_CID] = ((ASSETS / "logo.png").read_bytes(), "png")
@@ -40,8 +38,6 @@ GMAIL_DOMAINS = ("@gmail.com", "@googlemail.com")
 
 def config(conn) -> dict:
     cfg = get_integration(conn, "email")
-    # Settings saved by an earlier version could hold a Gmail address and app password but no
-    # server name, which left email silently switched off. Treat those as Gmail.
     address = str(cfg.get("from_email", "")).lower()
     if address.endswith(GMAIL_DOMAINS) and cfg.get("password") and not cfg.get("host"):
         cfg.update(provider="gmail", host="smtp.gmail.com", port=587, security="starttls",
@@ -131,11 +127,10 @@ def send(conn, kind: str, recipients: list[str], message: tuple[str, str, str], 
     return len(queued)
 
 
-# ---------- markdown -> email-safe HTML (escape first) ----------
 
 def _inline(text: str) -> str:
     parts = text.split("`")
-    if len(parts) % 2 == 0:  # unmatched backtick stays literal
+    if len(parts) % 2 == 0:
         parts[-2:] = [parts[-2] + "`" + parts[-1]]
     out = []
     for i, seg in enumerate(parts):
@@ -231,7 +226,6 @@ def md_to_html(text: str) -> str:
                 out.append(f'<{tag} style="margin:8px 0;padding-left:24px">')
                 list_tag = tag
             indent = len(m[1].replace("\t", "    ")) // 2 * 16
-            # Keep the author's numbering even when a nested bullet list interrupted the numbered one.
             number = f' value="{int(m[2][:-1])}"' if tag == "ol" else ""
             out.append(f'<li{number} style="margin:3px 0 3px {indent}px">{_inline(m[3])}</li>')
         else:
@@ -243,20 +237,16 @@ def md_to_html(text: str) -> str:
     return "".join(out)
 
 
-# ---------- templates: each returns (subject, html, text) ----------
-# Editorial layout for mail clients: a picture banner, a large centred headline with one
-# highlighted phrase, a coloured key line, a pill button and plenty of white space.
-# Tables + inline styles only; images travel inside the message.
 
 INK = "#161616"
 BODY = "#2b2b2b"
 QUIET = "#77756f"
 RULE = "#e4e2db"
 PAPER = "#fdfdfb"
-MARK = "#ffe08a"       # highlighter behind the key phrase of a headline
+MARK = "#ffe08a"
 SANS = "font-family:'Helvetica Neue',Helvetica,Arial,sans-serif"
 LEVEL_BANNERS = {"info": "announcement", "warning": "important", "critical": "critical"}
-APP_LINK = "__CERBERUS_APP_LINK__"  # replaced in send() with the configured address of the app
+APP_LINK = "__CERBERUS_APP_LINK__"
 
 
 def stamp() -> str:
@@ -424,7 +414,7 @@ def report_message(requested_by: str, subject: str, question: str, report_md: st
     try:
         from . import report_pdf
         attachment = (f"{name}.pdf", report_pdf.build(subject, requested_by, stamp(), question, report_md), "application", "pdf")
-    except Exception:  # a missing PDF library or an odd character must not stop the report going out
+    except Exception:
         attachment = (f"{name}.md", report_md.encode("utf-8"), "text", "markdown")
     return report_email(requested_by, subject, question, report_md, app_url, attachment[0]), [attachment]
 

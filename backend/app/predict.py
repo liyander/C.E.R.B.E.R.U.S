@@ -23,24 +23,22 @@ log = logging.getLogger("cerberus.predict")
 DEFAULTS = {
     "enabled": True,
     "interval_minutes": 10,
-    "alert_min": 70,        # alert admins when a warning's likelihood reaches this
+    "alert_min": 70,
     "notify_in_app": True,
     "email": True,
-    "incident": True,       # also open an incident for each alerted warning
-    "ai": True,             # let the AI write the warning
+    "incident": True,
+    "ai": True,
 }
 
-# Snort classifications, by the stage of an attack they point to.
 RECON = {"Detection of a Network Scan", "Attempted Information Leak", "Potentially Bad Traffic", "Misc activity",
          "Detection of a non-standard protocol or event", "Generic Protocol Command Decode", "Information Leak"}
 EXPLOIT = {"Executable code was detected", "Attempted Administrator Privilege Gain", "Attempted User Privilege Gain", "Web Application Attack",
            "Misc Attack", "Attempted Denial of Service", "Unsuccessful User Privilege Gain", "Denial of Service", "Attempted Login"}
 COMPROMISE = {"Successful Administrator Privilege Gain", "Successful User Privilege Gain", "A Network Trojan was detected",
               "Successful Credential Theft Detected", "Large Scale Information Leak", "Successful Information Leak"}
-# open-appsec attack types that try to run something, as opposed to looking around.
 WAF_EXPLOIT = ("Remote Code Execution", "SQL Injection", "Path Traversal", "Cross Site Scripting", "Command Injection", "LDAP Injection",
                "XML External Entity", "Server Side Request Forgery", "Local File Inclusion", "Remote File Inclusion", "Evasion Techniques")
-BASE_MINUTES = 360  # the "normal" level is the last six hours; a day of every log line is too slow to count
+BASE_MINUTES = 360
 STAGES = ("Reconnaissance", "Credential attack", "Exploitation attempt", "Possible intrusion")
 
 JOURNAL = '{job="loki.source.journal.system"}'
@@ -85,7 +83,6 @@ def save_settings(conn, changes: dict) -> dict:
     return settings(conn)
 
 
-# ---------- reading the sources ----------
 
 def _metric(cfg: dict, logql: str) -> list[tuple[dict, int]]:
     uid = store.text(cfg.get("loki_uid"), 80)
@@ -103,7 +100,7 @@ def _collect(conn) -> tuple[dict, list[str]]:
     g = c["grafana"]
     try:
         machines, problems = insights.machines(conn)
-    except Exception as exc:  # the forecast still works without vulnerability context
+    except Exception as exc:
         machines, problems = [], [f"Machine inventory: {str(exc)[:120]}"]
     wazuh_recent = [dict(r) for r in conn.execute(
         "SELECT source_ip, COUNT(*) AS n, MAX(severity) AS worst FROM events WHERE ts >= ? AND source = 'wazuh' AND source_ip != '' GROUP BY source_ip",
@@ -125,7 +122,6 @@ def _collect(conn) -> tuple[dict, list[str]]:
     return found, problems + failed
 
 
-# ---------- the patterns ----------
 
 def _name_of(machines: list[dict]) -> dict:
     """IP or name -> the machine record, so any address or host name resolves to one machine."""
@@ -172,12 +168,10 @@ def _password_guessing(d: dict, index: dict) -> list[dict]:
     day = {m.get("host", ""): n for m, n in d.get("fail_base", [])}
     failed_day = {(m.get("host", ""), m.get("ip", "")): n for m, n in d.get("fail_ip_base", [])}
     password_ok = {m.get("host", "") for m, _ in d.get("accepted", []) if m.get("method") == "password"}
-    # Someone who failed many times and then got in: this may already have happened.
     for m, n in d.get("accepted", []):
         host, ip, user = m.get("host", ""), m.get("ip", ""), m.get("user", "")
         fails = failed_day.get((host, ip), 0)
         if fails >= 10 and not insights.is_public(ip):
-            # Behind a gateway every connection shares one address, so this login cannot be tied to the attackers.
             out.append(_forecast(
                 f"ssh-in:{host}:{ip}:{user}", "credential", f"{user} logged in to {host} through the address the password guessing comes from", host, 62, STAGES[1],
                 "If this login was not one of your team, an attacker has guessed the password for this account.",
@@ -363,7 +357,6 @@ def forecasts(d: dict) -> list[dict]:
     return sorted(found, key=lambda f: -f["likelihood"])
 
 
-# ---------- running, remembering, alerting ----------
 
 def _store(conn, found: list[dict], s: dict) -> list[dict]:
     """Save this pass. A warning ends only when two passes in a row no longer see it, so it does not flicker."""
@@ -483,7 +476,6 @@ def active(conn, limit: int = 20) -> list[dict]:
     return [{**json.loads(r["detail"]), "first_seen": r["first_seen"], "last_seen": r["last_seen"], "peak": r["peak"], "alerted_at": r["alerted_at"]} for r in rows]
 
 
-# ---------- the page ----------
 
 def _tone(p: int) -> str:
     return "critical" if p >= 85 else "high" if p >= 70 else "medium" if p >= 50 else "low"

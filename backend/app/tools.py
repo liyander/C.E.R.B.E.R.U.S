@@ -51,7 +51,6 @@ BASE_TOOLS = [
         }, ["incident_id", "action", "target", "rationale"]),
 ]
 
-# (required Grafana setting, tool spec)
 GRAFANA_TOOLS = [
     ("prometheus_uid", _fn(
         "get_server_health",
@@ -307,7 +306,6 @@ def _send_report(conn, a, actor):
     if len(report) < 20:
         return {"error": "report must contain the full report text in markdown"}
     full_subject = f"[CERBERUS report] {subject}"
-    # A model that repeats the call must not send the same report twice.
     if conn.execute("SELECT 1 FROM emails WHERE kind = 'report' AND subject = ? AND created_at >= ?",
                     (full_subject, ago(minutes=5))).fetchone():
         return {"status": "already sent", "note": "This report was emailed moments ago; it was not sent again."}
@@ -404,11 +402,9 @@ def execute(conn, name: str, args, actor: str, tz_minutes: int = 0) -> str:
         result = {"error": f"unknown or unavailable tool '{name}'"}
     else:
         try:
-            # The user's timezone travels beside the model's arguments so tools can return local times.
             result = HANDLERS[name](conn, {**args, "_tz": tz_minutes}, actor)
         except (grafana.GrafanaError, wazuh.WazuhError) as exc:
             result = {"error": str(exc)}
-    # Report bodies can be long; the audit entry records that it was sent, not the whole text.
     logged = {k: (v if k != "report" else f"<{len(str(v))} characters>") for k, v in args.items()}
     audit(conn, f"ai (asked by {actor})", "ai.tool_call",
           {"tool": name, "arguments": logged, "error": result.get("error")})

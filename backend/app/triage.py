@@ -22,7 +22,6 @@ from .db import audit, db, get_setting, now, set_setting
 
 log = logging.getLogger("cerberus.triage")
 
-# Response deadline (hours) by priority band, and how long after that with nobody on it we escalate.
 SLA_HOURS = ((85, 1), (70, 4), (50, 24), (25, 72), (0, 168))
 OPEN = ("open", "investigating")
 VERDICT_WEIGHT = {"malicious": 1.0, "suspicious": 0.6, "benign": 0.15, "noise": 0.05, "": 0.5}
@@ -31,7 +30,6 @@ CRIT_WEIGHT = {"critical": 1.0, "high": 0.8, "medium": 0.55, "low": 0.35}
 _lock = threading.Lock()
 
 
-# ---------- priority ----------
 
 def _context(conn):
     """Everything priority scoring needs, read once: machine exposure/risk/kev, and live forecasts by IP."""
@@ -74,7 +72,6 @@ def score(inc: dict, ctx: dict, rep: dict | None = None) -> tuple[int, dict]:
         elif tone == "low" and rep.get("verdict", {}).get("label") == "Known benign":
             parts["Known-benign source"] = -8.0
     verdict = inc.get("ai_verdict") or ""
-    # The AI verdict mostly scales the whole score down for noise, up a little for a confirmed attack.
     weight = VERDICT_WEIGHT.get(verdict, 0.5)
     raw = sum(parts.values())
     adjusted = raw * (0.4 + 0.6 * weight) if verdict else raw
@@ -116,7 +113,6 @@ def rescore(conn, incident_id: int | None = None, ctx: dict | None = None) -> in
     return n
 
 
-# ---------- AI triage ----------
 
 def _facts(conn, incident_id: int) -> str:
     inc = store.get_incident(conn, incident_id)
@@ -177,7 +173,6 @@ def triage_pending(limit: int = 8) -> dict:
     return {"ok": True, "triaged": done, "failed": failed}
 
 
-# ---------- notes and the timeline ----------
 
 def _note(conn, incident_id: int, kind: str, author: str, body: str, meta: dict | None = None) -> int:
     cur = conn.execute("INSERT INTO incident_notes (incident_id, kind, author, body, meta, created_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -228,7 +223,6 @@ def _loads(text: str) -> dict:
         return {}
 
 
-# ---------- workflow: assign, status, escalate ----------
 
 def assign(conn, incident_id: int, assignee: str, actor: str) -> dict:
     row = conn.execute("SELECT status, ack_at FROM incidents WHERE id = ?", (incident_id,)).fetchone()
@@ -285,7 +279,6 @@ def _escalate(conn) -> int:
     for r in rows:
         conn.execute("UPDATE incidents SET escalated_at = ? WHERE id = ?", (stamp, r["id"]))
         _note(conn, r["id"], "escalate", "CERBERUS", "Past its response deadline with nobody assigned.")
-    # A single grouped notification, so a large backlog does not flood the bell.
     refs = ", ".join(f"INC-{r['id']:04d}" for r in rows[:5]) + (f" and {len(rows) - 5} more" if len(rows) > 5 else "")
     title = f"INC-{rows[0]['id']:04d} is overdue" if len(rows) == 1 else f"{len(rows)} incidents are overdue"
     conn.execute("INSERT INTO notifications (title, body, level, audience, in_app, emailed, created_by, created_at) VALUES (?, ?, 'warning', 'all', 1, 0, 'Triage', ?)",
@@ -330,7 +323,6 @@ def tick() -> None:
         _lock.release()
 
 
-# ---------- noise suppression ----------
 
 def suppressions(conn) -> list[dict]:
     rules = store.suppressions(conn)
@@ -384,7 +376,6 @@ def suppress_from_incident(conn, incident_id: int, by: str, actor: str) -> dict:
         raise ValueError("No such incident")
     if by == "rule" and row["rule_id"]:
         return add_suppression(conn, "rule_id", row["rule_id"], f"Rule {row['rule_id']}", actor)
-    # Fall back to the leading phrase of the title (before any count/qualifier).
     phrase = re.split(r"[(:]| from | against | on ", row["title"])[0].strip()[:80]
     return add_suppression(conn, "title_contains", phrase, phrase, actor)
 

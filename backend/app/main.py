@@ -19,9 +19,6 @@ from .secrets_store import decrypt, encrypt
 
 WEB_DIR = ROOT / "web"
 VERSION = "0.2.0"
-# Status for "a system CERBERUS depends on failed" (the AI model, Grafana, Wazuh, the mail server).
-# Deliberately not 502 or 504: proxies and tunnels in front of CERBERUS replace those responses with
-# their own error page, which throws away the explanation the user needs to see.
 UPSTREAM_FAILED = 424
 
 
@@ -45,7 +42,6 @@ Admin = Depends(auth.require_admin)
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
-    # The UI renders attacker-influenced log text; forbid inline/3rd-party script as a second line of defence.
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
         "frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
@@ -54,7 +50,6 @@ async def security_headers(request: Request, call_next):
     return response
 
 
-# ---------- models ----------
 
 class ProviderBody(BaseModel):
     name: str = Field(min_length=1, max_length=80)
@@ -73,7 +68,7 @@ class ModelsPreviewBody(BaseModel):
 class ChatBody(BaseModel):
     message: str = Field(min_length=1, max_length=8000)
     conversation_id: int | None = None
-    tz_offset: int = Field(default=0, ge=-720, le=840)  # the browser's offset from UTC, in minutes
+    tz_offset: int = Field(default=0, ge=-720, le=840)
 
 
 class BriefBody(BaseModel):
@@ -176,7 +171,6 @@ def health():
     return {"status": "ok", "version": VERSION, "time": now()}
 
 
-# ---------- read models ----------
 
 @app.get("/api/v1/overview")
 def overview(user=User):
@@ -256,7 +250,6 @@ def logs_context(body: ContextBody, user=User):
         raise HTTPException(UPSTREAM_FAILED, str(exc))
 
 
-# ---------- Wazuh ----------
 
 @app.get("/api/v1/integrations/wazuh")
 def wazuh_get(user=Admin):
@@ -270,7 +263,6 @@ def wazuh_save(body: WazuhBody, user=Admin):
         current = wazuh.settings(conn)
         cfg = body.model_dump()
         cfg["url"] = cfg["url"].rstrip("/")
-        # A blank password keeps the saved one, but never carries it to a different address or account.
         if not cfg["password"] and (cfg["url"], cfg["username"]) == (current["url"], current["username"]):
             cfg["password"] = current["password"]
         cfg["mode"] = current["mode"] if cfg["url"] == current["url"] else ""
@@ -322,7 +314,6 @@ def wazuh_sync(user=Admin):
     return wazuh.sync("manual")
 
 
-# ---------- AI watch (scheduled analyst) ----------
 
 @app.get("/api/v1/watch")
 def watch_status(user=User):
@@ -619,7 +610,6 @@ def alert_rule_save(body: dict = Body(...), user=Admin):
             rule = alerting.save(conn, body, user["username"])
         except ValueError as exc:
             raise HTTPException(400, str(exc))
-        # A new or raised rule is checked straight away rather than at the next pass.
         fired = alerting.evaluate(conn, only=rule["id"]) if rule["enabled"] else []
         return {"rule": rule, "fired": fired}
 
@@ -657,7 +647,7 @@ def servers_agents(user=Admin):
         return []
     try:
         rows = insights._cached(("server-agents",), 300, lambda: wazuh.agents(w)["agents"])
-    except Exception:  # the form still works with a typed name
+    except Exception:
         return []
     return [{k: a.get(k, "") for k in ("name", "ip", "os", "status")} for a in rows if a.get("id") != "000"]
 
@@ -805,7 +795,6 @@ def incident_queue(status: str = "active", assignee: str = "", verdict: str = ""
     with db() as conn:
         incidents = store.query_queue(conn, status=status, assignee=assignee, verdict=verdict)
         stats = store.triage_stats(conn)
-        # Right after launch priorities are still 0; fill them in in the background.
         if stats["open"] and incidents and max((i["priority"] for i in incidents), default=0) == 0:
             triage.kick_rescore()
         return {"incidents": incidents, "stats": stats, "settings": triage.settings(conn),
@@ -1019,7 +1008,7 @@ def asset_update(asset_id: int, body: dict = Body(...), user=Admin):
         if not cur.rowcount:
             raise HTTPException(404, "Asset not found")
         audit(conn, user["username"], "asset.update", {"asset_id": asset_id, **{k: body.get(k) for k in ("criticality", "owner", "kind", "exposure") if k in body}})
-        if crit:  # importance changed → re-rank this asset's open incidents
+        if crit:
             triage.rescore(conn)
     return {"ok": True}
 
@@ -1032,7 +1021,6 @@ def list_audit(limit: int = 200, user=Admin):
         return [{**dict(r), "detail": json.loads(r["detail"] or "{}")} for r in rows]
 
 
-# ---------- approvals ----------
 
 @app.get("/api/v1/approvals")
 def list_approvals(user=User):
@@ -1048,7 +1036,6 @@ def list_approvals(user=User):
 def decide_approval(approval_id: int, body: DecisionBody, user=Admin):
     with db() as conn:
         store.expire_approvals(conn)
-        # Conditional update makes a duplicate or late decision a no-op.
         cur = conn.execute(
             "UPDATE approvals SET status = ?, decided_by = ?, decision_note = ?, decided_at = ? "
             "WHERE id = ? AND status = 'pending'",
@@ -1060,7 +1047,6 @@ def decide_approval(approval_id: int, body: DecisionBody, user=Admin):
             "note": "Decision recorded. No response executor is connected, so nothing was executed."}
 
 
-# ---------- AI providers ----------
 
 def _public_provider(row) -> dict:
     d = dict(row)
@@ -1102,7 +1088,6 @@ def providers_update(provider_id: int, body: ProviderBody, user=Admin):
     with db() as conn:
         current = _provider_or_404(conn, provider_id)
         base_url = body.base_url.rstrip("/")
-        # A blank key keeps the stored one, but never carries it to a different host.
         key = body.api_key.strip() or (current["api_key"] if base_url == current["base_url"] else "")
         conn.execute("UPDATE ai_providers SET name = ?, kind = ?, base_url = ?, api_key = ?, model = ? WHERE id = ?",
                      (body.name, body.kind, base_url, encrypt(key, DATA_DIR), body.model.strip(), provider_id))
@@ -1157,9 +1142,6 @@ def _require_provider(conn) -> dict:
     return provider
 
 
-# ---------- AI console ----------
-# Conversations are written by the server as part of answering, so history never
-# depends on the browser saving anything.
 
 MAX_CONVERSATIONS = 200
 MAX_STORED_MESSAGES = 200
@@ -1190,11 +1172,9 @@ def _begin_turn(conn, user: dict, body: ChatBody) -> tuple[int, list[dict]]:
         cur = conn.execute("INSERT INTO conversations (user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
                            (user["id"], " ".join(question.split())[:80] or "New chat", now(), now()))
         conversation_id, messages = cur.lastrowid, []
-        # Oldest conversations roll off so history cannot grow without bound.
         conn.execute(
             "DELETE FROM conversations WHERE user_id = ? AND id NOT IN (SELECT id FROM conversations "
             "WHERE user_id = ? ORDER BY updated_at DESC, id DESC LIMIT ?)", (user["id"], user["id"], MAX_CONVERSATIONS))
-    # A retry after a failed answer replaces the unanswered question instead of stacking a duplicate.
     if messages and messages[-1]["role"] == "user":
         messages.pop()
     messages.append({"role": "user", "content": question})
@@ -1248,7 +1228,7 @@ def ai_chat_stream(body: ChatBody, user=User):
             try:
                 for item in steps():
                     outbox.put(item)
-            except Exception as exc:  # never leave the browser waiting on a crashed worker
+            except Exception as exc:
                 outbox.put(line({"type": "error", "detail": f"The analyst stopped unexpectedly: {exc}"[:300]}))
             finally:
                 outbox.put(None)
@@ -1361,7 +1341,6 @@ def incident_investigate(incident_id: int, user=User):
     return result
 
 
-# ---------- integrations ----------
 
 @app.get("/api/v1/integrations")
 def integrations(user=Admin):
@@ -1416,7 +1395,6 @@ def _ingest_all(events: list[dict], actor: str) -> dict:
     with db() as conn:
         for ev in events:
             try:
-                # Machine senders never get to set the demo flag or pick an internal asset id.
                 result = store.ingest_event(conn, {**ev, "demo": False, "asset_id": None})
             except ValueError:
                 stats["rejected"] += 1
@@ -1444,7 +1422,6 @@ def ingest_events(request: Request, payload: dict = Body(...)):
     return _ingest_all([e for e in events if isinstance(e, dict)], "ingest-api")
 
 
-# ---------- demo data ----------
 
 @app.post("/api/v1/demo")
 def demo_load(user=Admin):
@@ -1462,7 +1439,6 @@ def demo_clear(user=Admin):
     return {"ok": True}
 
 
-# ---------- web UI ----------
 
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 

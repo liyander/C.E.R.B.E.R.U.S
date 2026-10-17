@@ -41,7 +41,7 @@ def _parallel(jobs: dict) -> tuple[dict, list[str]]:
     def run(job):
         try:
             return job(), ""
-        except Exception as exc:  # one source failing must not take the page down
+        except Exception as exc:
             return None, str(exc)[:160]
     with ThreadPoolExecutor(max_workers=8) as pool:
         done = dict(zip(jobs, pool.map(run, jobs.values())))
@@ -66,13 +66,12 @@ def _configs(conn) -> dict:
             "inventory": openappsec.inventory(conn)}
 
 
-# ---------- one IP address, everywhere ----------
 
 _ACCEPTED = re.compile(r"Accepted (\S+) for (\S+) from (\S+) port")
 _FAILED = re.compile(r"(?:Failed (\S+) for (?:invalid user )?(\S+) from (\S+) port|Invalid user (\S*) from (\S+))")
 
 
-LOG_HOURS = 6  # searching every log line for an address is slow; logs are searched over the last six hours
+LOG_HOURS = 6
 
 
 def _loki_lines(cfg: dict, logql: str, hours: int, limit: int) -> list[tuple[int, str, dict]]:
@@ -103,7 +102,6 @@ def ip_profile(conn, q: dict) -> dict:
                                  empty="No external addresses have shown up in the last 24 hours.")]}
     c = _configs(conn)
     g, quoted = c["grafana"], '"' + ip.replace('"', "") + '"'
-    # The database is read here, in this thread; only the network lookups run in parallel.
     local = (store.query_events(conn, q=ip, limit=100),
              [dict(r) for r in conn.execute("SELECT id, title, status, severity, first_seen, last_seen FROM incidents WHERE source_ip = ? ORDER BY last_seen DESC LIMIT 20", (ip,))])
     jobs = {}
@@ -156,14 +154,13 @@ def ip_profile(conn, q: dict) -> dict:
     accepted = [k for k in logins if k[2] == "accepted"]
     times = [t["time"] for t in timeline if t.get("time")]
     kind = "External" if is_public(ip) else "Internal"
-    # Threat-intel reputation (external addresses only), cached 12h.
     rep = None
     if kind == "External":
         try:
             from . import intel
             if intel.enabled(conn):
                 rep = intel.lookup(conn, ip)
-        except Exception as exc:  # enrichment must never break the page
+        except Exception as exc:
             problems.append(f"Reputation: {str(exc)[:80]}")
     rep_block = []
     rep_tile = None
@@ -221,7 +218,6 @@ def _recent_attackers(conn) -> list[dict]:
     return [{"ip": r["source_ip"], "sources": r["sources"], "hits": r["n"], "_href": f"#/ip?ip={r['source_ip']}"} for r in rows if is_public(r["source_ip"])][:25]
 
 
-# ---------- machines: one record per server, from every source ----------
 
 def _name_to_ip(c: dict, agents: list[dict]) -> dict[str, str]:
     names = {a["name"]: a["ip"] for a in agents if a.get("name") and a.get("ip") and a["ip"] != "127.0.0.1"}
@@ -277,7 +273,7 @@ def machines(conn) -> tuple[list[dict], list[str]]:
             jobs["waf"] = lambda: openappsec.all_requests(g, 24, c["inventory"])
             jobs["waf_agents"] = lambda: openappsec.live_agents(g)
         try:
-            cves = _vuln_base(conn)  # read before the parallel lookups: it uses the database connection
+            cves = _vuln_base(conn)
         except Exception as exc:
             cves = ([], [str(exc)[:120]], "")
         found, problems = _parallel(jobs)
@@ -410,7 +406,6 @@ def risk_page(conn, q: dict) -> dict:
         ]}
 
 
-# ---------- which vulnerabilities to fix first ----------
 
 KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 EPSS_URL = "https://api.first.org/data/v1/epss"
@@ -554,7 +549,6 @@ def vulns_page(conn, q: dict) -> dict:
         ]}
 
 
-# ---------- how much the AI is used ----------
 
 def usage_page(conn, q: dict) -> dict:
     hours = {"24": 24, "168": 168, "720": 720}.get(q.get("hours"), 24)

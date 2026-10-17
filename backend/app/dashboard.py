@@ -93,7 +93,6 @@ def vitals(conn) -> dict:
             jobs["snort_top"] = lambda: snort.counts(g, ("msg",), 1440, 1, keep=300)
             jobs["sensors_day"] = lambda: snort.counts(g, ("host",), 1440, keep=600)
             jobs["sensors_now"] = lambda: snort.counts(g, ("host",), 20, keep=60)
-        # Database reads stay on this thread.
         q = lambda sql, *a: conn.execute(sql, a).fetchone()[0]
         since = store.ago(hours=24)
         active = "status IN ('open', 'investigating') AND demo = 0"
@@ -117,7 +116,6 @@ def vitals(conn) -> dict:
         found, problems = insights._parallel(jobs)
         panels = []
 
-        # Wazuh
         if "wazuh" in found:
             x = found["wazuh"]
             lv = x["levels"]
@@ -131,7 +129,6 @@ def vitals(conn) -> dict:
         else:
             panels.append(_off("wazuh", "Wazuh", problems, "wazuh", "/static/logos/wazuh.svg"))
 
-        # Grafana / Prometheus
         if "health" in found:
             h = found["health"]
             down = [t["instance"] for t in h["scrape_targets"] if not t["up"]]
@@ -150,7 +147,6 @@ def vitals(conn) -> dict:
         else:
             panels.append(_off("grafana", "Grafana · servers", problems, "health", "/static/logos/grafana.svg"))
 
-        # open-appsec
         through_hour = 0
         if "waf" in found:
             reqs = found["waf"]
@@ -170,7 +166,6 @@ def vitals(conn) -> dict:
         else:
             panels.append(_off("openappsec", "Web firewall", problems, "waf", "/static/logos/openappsec.png"))
 
-        # Snort
         if "snort_day" in found:
             day = {g_["prio"]: n for g_, n in found["snort_day"]}
             hour_n = sum(n for _, n in found.get("snort_hour", []))
@@ -185,7 +180,6 @@ def vitals(conn) -> dict:
         else:
             panels.append(_off("snort", "Snort", problems, "snort_day", "/static/logos/snort.png"))
 
-        # CERBERUS itself: incidents, forecast, risk, patches
         fc = db["forecasts"]
         kev = sum(1 for v in vulns if v.get("kev"))
         panels.append(_panel("cerberus", "Incidents and forecast", "critical" if db["critical"] or (fc and fc[0]["likelihood"] >= 85) else "warn" if db["open"] or fc else "ok", [

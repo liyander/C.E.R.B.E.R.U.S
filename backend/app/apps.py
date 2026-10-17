@@ -20,9 +20,7 @@ class NotConnected(Exception):
     pass
 
 
-# ---------- building blocks of a page ----------
 
-# The icon a headline number gets, from the words in its label.
 TILE_ICONS = (("priority", "alert"), ("sensor", "cpu"), ("signature", "list"), ("address", "globe"), ("external", "globe"), ("blocked", "shield"), ("detected", "eye"), ("request", "globe"), ("source", "globe"), ("asset", "layers"), ("attack", "alert"), ("agent", "users"), ("score", "gauge"), ("passed", "check"), ("failed", "close"), ("not applicable", "moon"), ("critical", "alert"),
               ("high", "alert"), ("medium", "shield"), ("low", "shield"), ("alert", "bell"), ("firing", "bell"), ("rule", "list"), ("level", "activity"),
               ("version", "spark"), ("dashboard", "grid"), ("data source", "plug"), ("type", "layers"), ("folder", "inbox"), ("starred", "star"),
@@ -91,7 +89,6 @@ def badge(text, tone="") -> dict:
     return {"text": str(text), "tone": tone}
 
 
-# ---------- Wazuh ----------
 
 HOURS = (("1", "Last hour"), ("6", "Last 6 hours"), ("24", "Last 24 hours"), ("168", "Last 7 days"))
 STEP = {"1": "5m", "6": "15m", "24": "1h", "168": "6h"}
@@ -122,7 +119,7 @@ def _agents(client) -> list[dict]:
     try:
         rows = wazuh._agent_rows(client)
     except wazuh.WazuhError:
-        rows = []  # connected straight to the indexer: no manager API
+        rows = []
     _agent_cache[client.base] = (time.monotonic(), rows)
     return rows
 
@@ -503,7 +500,6 @@ def wz_server(ctx) -> dict:
             note="Stopped services such as wazuh-maild or wazuh-agentlessd are optional features that are simply not in use.")]}
 
 
-# ---------- Grafana ----------
 
 def _g(cfg, path, params=None):
     """(data, error): one Grafana call that may be refused without losing the rest of the page."""
@@ -688,7 +684,6 @@ def gf_datasources(ctx) -> dict:
             empty="No data sources.")]}
 
 
-# ---------- open-appsec (web application firewall) ----------
 
 OA_ACTION = {"Prevent": ("blocked", "ok"), "Detect": ("detected", "high")}
 OA_SEVERITY = {"Critical": "critical", "High": "high", "Medium": "medium", "Low": "low", "Info": "info"}
@@ -927,7 +922,6 @@ def oa_agents(ctx) -> dict:
                          empty="No open-appsec agent has written to Loki in the last 7 days.")]}
 
 
-# ---------- Snort (network intrusion detection) ----------
 
 SN_PERIODS = (("1", "Last hour"), ("6", "Last 6 hours"), ("24", "Last 24 hours"))
 SN_STEP = {"1": 120, "6": 600, "24": 1800}
@@ -939,7 +933,6 @@ def _sn(ctx) -> dict:
     cfg, q = ctx["cfg"], ctx["q"]
     hours = q.get("hours") if q.get("hours") in SN_STEP else "1"
     minutes = int(hours) * 60
-    # Which sensors exist changes rarely, and finding out means reading a day of journal: remember it for ten minutes.
     sensors = [labels["host"] for labels, _ in snort.counts(cfg, ("host",), 1440, keep=600) if labels.get("host")]
     host = q.get("host") if q.get("host") in sensors else ""
     return {"cfg": cfg, "q": q, "hours": hours, "minutes": minutes, "host": host, "sensors": sensors, "keep": {"host": host, "hours": "" if hours == "1" else hours},
@@ -1050,11 +1043,6 @@ def sn_sensors(ctx) -> dict:
                          empty="No Snort alerts have reached Loki in the last 24 hours.")]}
 
 
-# ---------- Grafana dashboards, drawn inside CERBERUS ----------
-#
-# Each dashboard's definition is read from Grafana, its variables are resolved, and every panel's
-# queries are run through Grafana's datasource proxy. Panels become the same blocks as any other
-# page: stat and gauge -> tiles, bar gauge -> bars, time series -> line charts, table and logs -> tables.
 
 RANGES = (("15m", "Last 15 minutes", 900), ("30m", "Last 30 minutes", 1800), ("1h", "Last hour", 3600), ("3h", "Last 3 hours", 10800),
           ("6h", "Last 6 hours", 21600), ("12h", "Last 12 hours", 43200), ("24h", "Last 24 hours", 86400), ("2d", "Last 2 days", 172800),
@@ -1064,7 +1052,6 @@ COLOR_TONE = {"red": "critical", "dark-red": "critical", "semi-dark-red": "criti
 TILE_PANELS, CHART_PANELS = ("stat", "gauge", "singlestat"), ("timeseries", "graph", "state-timeline", "barchart", "status-history")
 MAX_PANELS, MAX_SERIES, CHART_POINTS, LOG_LINES = 40, 12, 110, 40
 ALL = "$__all"
-# A fitting icon for a dashboard, from the words in its title and tags; SPARE_ICONS keep the rest distinct.
 DASH_ICONS = (("mysql|postgres|mariadb|database|sql|redis|mongo", "database"), ("log|loki", "terminal"),
               ("blackbox|endpoint|uptime|probe|http|website", "globe"), ("node|host|server|linux|system", "cpu"),
               ("docker|container|kube|k8s", "layers"), ("network|traffic|nginx|proxy", "cloud"), ("alert", "bell"), ("security|auth|wazuh", "shield"))
@@ -1252,7 +1239,6 @@ def _stat_tile(panel: dict, label: str, value) -> dict:
         elif mapping.get("type") == "special" and value is None and options.get("match") in ("null", "null+nan"):
             text = (options.get("result") or {}).get("text")
     if text is None and value is not None:
-        # Thresholds colour the value; plain green is the resting state, so only warnings are carried over.
         coloured = (defaults.get("color") or {}).get("mode") == "thresholds" and (panel.get("options") or {}).get("colorMode") != "none"
         colour = next((s.get("color") for s in reversed((defaults.get("thresholds") or {}).get("steps") or []) if s.get("value") is None or value >= s["value"]), "")
         tone = _colour_tone(colour) if coloured and _colour_tone(colour) != "ok" else ""
@@ -1326,7 +1312,7 @@ def _dashboard_list(cfg, wait: float = 4.0) -> list[dict]:
             d["tint"] = number % 8 + 1
             used.add(d["icon"])
         _dash_cache[key] = (time.monotonic() + (300 if found else 60), found)
-    except Exception:  # the sidebar must still load when Grafana is down
+    except Exception:
         _dash_cache[key] = (time.monotonic() + 60, hit[1] if hit else [])
     return _dash_cache[key][1]
 
@@ -1360,7 +1346,6 @@ def gf_dashboard(ctx) -> dict:
     blocks = []
     top = min(((p.get("gridPos") or {}).get("y", 0) for p in panels), default=0)
     for panel, data in zip(panels, results):
-        # Each panel keeps the place and size it has in Grafana (a 24-column grid).
         grid = panel.get("gridPos") or {}
         for block in _panel_blocks(panel, data, start, step):
             block.update(x=store.clamp(grid.get("x"), 0, 23, 0), y=max(0, store.clamp(grid.get("y"), 0, 5000, 0) - top),
@@ -1382,7 +1367,6 @@ def _dashboard_menu(cfg) -> dict:
     return {"Dashboards": [{"id": f"d-{d['uid']}", "label": d["title"], "icon": d.get("icon", "chart"), "tint": d.get("tint", 1)} for d in _dashboard_list(cfg)]}
 
 
-# ---------- the catalogue ----------
 
 def _page(page_id, label, icon, handler, external="") -> dict:
     return {"id": page_id, "label": label, "icon": icon, "handler": handler, "external": external}
@@ -1459,7 +1443,6 @@ def catalog(conn) -> list[dict]:
     out = []
     for a in APPS:
         connected = a["ready"](conn)
-        # Entries an application adds from its own content, such as one per Grafana dashboard.
         more = a["more"](a["config"](conn)) if connected and a.get("more") else {}
         out.append({"id": a["id"], "name": a["name"], "about": a["about"], "connected": connected, "logo": a.get("logo") or f"/static/logos/{a['id']}.svg",
                     "menu": [{"label": label, "items": [{k: v for k, v in item.items() if k in ("id", "route", "label", "icon")} for item in items]

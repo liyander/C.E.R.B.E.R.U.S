@@ -20,11 +20,11 @@ DEFAULTS = {
     "enabled": True,
     "interval_minutes": 5,
     "snort": True,
-    "snort_priority": 1,        # bring in Snort alerts of this priority and more serious (1 = only the most serious)
+    "snort_priority": 1,
     "waf": True,
-    "waf_mode": "detected",     # detected = let through only; critical = let through or critical; all = every judged request
+    "waf_mode": "detected",
     "multi_source": True,
-    "multi_min": 2,             # how many different sources must see an internet address within the hour
+    "multi_min": 2,
 }
 WAF_MODES = ("detected", "critical", "all")
 SNORT_SEVERITY = {"1": 8, "2": 6, "3": 4, "4": 3}
@@ -90,8 +90,6 @@ def run(reason: str = "schedule") -> dict:
                 minutes = max(1, int((now_utc - hour).total_seconds() // 60))
                 hour_key, stamp = hour.strftime("%Y%m%d%H"), now()
                 problems = []
-                # Snort: every alert of the chosen priorities this hour, grouped by target and signature. Scanners rotate
-                # through many addresses, so grouping by source would open an incident per address; the sources are listed instead.
                 if s["snort"]:
                     for priority in range(1, s["snort_priority"] + 1):
                         try:
@@ -116,7 +114,6 @@ def run(reason: str = "schedule") -> dict:
                                      "evidence_ref": {"backend": "loki", "query": f"snort signature {sig} to {dst}"}}
                             summary[_upsert(conn, event, item["total"])] += 1
                             summary["snort"] += 1
-                # WAF: the requests the chosen mode cares about, grouped by source, asset and attack type.
                 if s["waf"]:
                     try:
                         cutoff = hour.timestamp() * 1e9
@@ -141,7 +138,6 @@ def run(reason: str = "schedule") -> dict:
                             summary["waf"] += 1
                     except grafana.GrafanaError as exc:
                         problems.append(f"WAF: {exc}")
-                # One internet address, several sources, one hour.
                 if s["multi_source"]:
                     seen: dict[str, set] = {}
                     try:

@@ -16,11 +16,11 @@ log = logging.getLogger("cerberus.reports")
 
 DEFAULTS = {
     "enabled": False,
-    "frequency": "weekly",      # daily | weekly
-    "weekday": 0,               # 0 = Monday, for weekly reports
-    "hour": 8,                  # local hour to send
+    "frequency": "weekly",
+    "weekday": 0,
+    "hour": 8,
     "send_to_admins": True,
-    "extra_recipients": "",     # comma separated, e.g. management
+    "extra_recipients": "",
     "ai_summary": True,
 }
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
@@ -193,7 +193,7 @@ def tick() -> None:
         due = local.hour >= s["hour"] and (s["frequency"] == "daily" or local.weekday() == s["weekday"])
         if not due or get_setting(conn, "reports_last_day") == today:
             return
-        set_setting(conn, "reports_last_day", today)  # first, so a failure cannot cause a mail loop
+        set_setting(conn, "reports_last_day", today)
     if not _lock.acquire(blocking=False):
         return
     try:

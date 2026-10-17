@@ -1,4 +1,3 @@
-# Production runner for the CERBERUS startup task. No auto-reload.
 param([string]$BindHost = "127.0.0.1", [int]$Port = 8787)
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot

@@ -22,7 +22,6 @@ DEFAULTS = {"enabled": False, "url": "", "username": "", "password": "", "verify
             "min_level": 7, "exclude_rules": "", "poll_minutes": 2}
 INDEX = "wazuh-alerts-*"
 MAX_GROUPS = 500
-# Wazuh rule groups -> CERBERUS event types. First match wins; anything else uses the first group.
 EVENT_TYPES = (
     ("vulnerability-detector", "vulnerability"),
     ("authentication_failed", "authentication_failure"),
@@ -182,7 +181,6 @@ def _store_group(conn, bucket: dict, hour: datetime) -> str:
     result = store.ingest_event(conn, event)
     if not result["duplicate"]:
         return "new"
-    # Seen earlier this hour: keep the single event current instead of adding another.
     stamp = store.parse_ts(last)
     conn.execute("UPDATE events SET title = ?, message = ?, ts = ?, severity = MAX(severity, ?) WHERE id = ?",
                  (title[:200], message[:4000], stamp, event["severity"], result["event_id"]))
@@ -227,7 +225,6 @@ def tick() -> None:
         cfg = settings(conn)
         last = get_setting(conn, "wazuh_last_sync")
         failed = get_setting(conn, "wazuh_last_ok") == "0"
-    # After a failure (a network blip, Wazuh restarting) try again soon instead of waiting a whole interval.
     every = min(2, int(cfg["poll_minutes"])) if failed else int(cfg["poll_minutes"])
     if cfg["enabled"] and is_ready(cfg) and (not last or last <= store.ago(minutes=max(1, every))):
         result = sync("schedule")
@@ -248,7 +245,6 @@ def test(cfg: dict) -> dict:
             "agents": [{"name": b["key"], "alerts": b["doc_count"]} for b in data.get("aggregations", {}).get("agents", {}).get("buckets", [])]}
 
 
-# ---------- read-only lookups for the AI analyst ----------
 
 def search_alerts(cfg: dict, *, agent="", rule_id="", source_ip="", text="", min_level=1, hours=24, limit=20) -> dict:
     """Recent individual alerts straight from Wazuh, for detail the grouped events do not carry."""
@@ -257,7 +253,6 @@ def search_alerts(cfg: dict, *, agent="", rule_id="", source_ip="", text="", min
     for field, value in (("agent.name", agent), ("rule.id", rule_id), ("data.srcip", source_ip)):
         if store.text(value, 120):
             filters.append({"term": {field: store.text(value, 120)}})
-    # rule.description is stored as an exact keyword in Wazuh, so it needs a wildcard; the log line is full text.
     words = store.text(text, 200).replace("*", " ").replace("?", " ").strip()
     must = [{"bool": {"minimum_should_match": 1, "should": [
         {"wildcard": {"rule.description": {"value": f"*{words}*", "case_insensitive": True}}},
@@ -312,7 +307,6 @@ def _agent_rows(client: _Client, params: dict | None = None) -> list[dict]:
         "id": a.get("id"), "name": a.get("name"), "ip": a.get("ip"), "status": a.get("status"),
         "os": " ".join(filter(None, [(a.get("os") or {}).get("name"), (a.get("os") or {}).get("version")])),
         "wazuh_version": a.get("version"),
-        # The manager reports itself with a far-future keep-alive.
         "last_seen": None if a.get("id") == "000" else a.get("lastKeepAlive")}.items() if v not in (None, "")} for a in items]
 
 

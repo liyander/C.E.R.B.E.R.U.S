@@ -18,7 +18,7 @@ from . import grafana, store, tools
 from .db import now
 
 MAX_TOOL_CALLS = 12
-REQUEST_TIMEOUT = 300  # large free-tier models can take minutes on a busy day
+REQUEST_TIMEOUT = 300
 
 PRESETS = [
     {"kind": "nvidia", "label": "NVIDIA NIM (API)", "base_url": "https://integrate.api.nvidia.com/v1",
@@ -198,8 +198,6 @@ SNAPSHOT:
 {snapshot}"""
 
 
-# Reasoning models spend output tokens on thinking before they write anything, so the limit has
-# to leave room for both; a short limit comes back as an empty answer.
 BRIEF_TOKENS = 4000
 MAX_RETRY_TOKENS = 12000
 EMPTY_ANSWER = ("(The model used up its whole answer allowance on reasoning and wrote nothing. Try again, or choose a "
@@ -263,7 +261,6 @@ def list_models(provider: dict) -> list[str]:
     return sorted(str(m.get("id") or m.get("name")) for m in items if isinstance(m, dict))
 
 
-# ---------- usage: every model call is counted ----------
 
 _usage = contextvars.ContextVar("cerberus_ai_usage", default=None)
 PURPOSES = {"chat": "Analyst chat", "brief": "Page summaries", "watch": "AI watch", "digest": "Daily digest", "report": "Scheduled reports", "forecast": "Attack forecast", "triage": "Incident triage", "closure": "Closure reports",
@@ -297,7 +294,7 @@ def _record(provider: dict, started: float, data: dict | None = None, messages: 
                          (_now(), ctx["run"], ctx["purpose"], ctx["actor"][:80], str(provider.get("name", ""))[:80], str(provider.get("model", ""))[:120],
                           prompt, completion, reasoning, int(used.get("total_tokens") or 0) or prompt + completion, int(estimated),
                           len(message.get("tool_calls") or []), int((time.monotonic() - started) * 1000), int(not error), error[:300]))
-    except Exception:  # counting must never break an answer
+    except Exception:
         pass
 
 
@@ -310,7 +307,6 @@ def chat_completion(provider: dict, messages: list[dict], tool_specs: list[dict]
         _record(provider, started, messages=messages, error=str(exc))
         raise
     _record(provider, started, data, messages)
-    # Cut off while still thinking: nothing was written, so ask once more with room to finish.
     if (data["choices"][0].get("finish_reason") == "length" and not _clean(message.get("content")) and not message.get("tool_calls")
             and max_tokens < MAX_RETRY_TOKENS):
         return chat_completion(provider, messages, tool_specs, MAX_RETRY_TOKENS)
@@ -375,7 +371,6 @@ def test_provider(provider: dict) -> dict:
 
 
 def _clean(content) -> str:
-    # Reasoning models (e.g. DeepSeek-R1 on NIM/Ollama) inline their scratchpad.
     return re.sub(r"<think>.*?</think>", "", str(content or ""), flags=re.S).strip()
 
 
@@ -454,11 +449,6 @@ def investigate(conn, provider: dict, history: list[dict], actor: str, tz_minute
     return {k: v for k, v in step.items() if k != "type"}
 
 
-# ---------- @sources: the user points the analyst at one system ----------
-#
-# Writing @wazuh (or @grafana, @waf, @snort ...) in a question limits the analyst to that system's
-# lookups for that question, so the answer comes from the source the user asked about.
-# key -> (name shown, what it covers, other spellings, the lookups it allows)
 SOURCES = {
     "wazuh": ("Wazuh", "Endpoint alerts, agents, configuration assessment", ("siem",),
               ("wazuh_summary", "search_wazuh_alerts", "wazuh_agents", "wazuh_configuration_assessment")),
@@ -497,12 +487,10 @@ def investigate_steps(conn, provider: dict, history: list[dict], actor: str, tz_
     Yields a {"type": "tool"} step before each tool runs (so a UI can show progress)
     and finishes with one {"type": "final"} step.
     """
-    # Server commands need a person watching who can approve them, so only a live chat offers them.
     tool_specs = [t for t in tools.available_tools(conn) if commands or t["function"]["name"] != "run_server_command"]
     local = (datetime.now(timezone.utc) + timedelta(minutes=tz_minutes)).strftime("%a %d %b %Y, %H:%M")
     system = SYSTEM_PROMPT.format(now=now(), local=local, tz=grafana.tz_label(tz_minutes),
                                   context=_environment(conn, tool_specs))
-    # A source tagged with @ in the newest question narrows this turn to that source's lookups.
     asked_for = mentioned(next((m.get("content") for m in reversed(history) if m.get("role") == "user"), ""))
     if asked_for:
         allowed = {t for key in asked_for for t in SOURCES[key][3]} | set(ALWAYS_TOOLS)
@@ -529,7 +517,6 @@ def investigate_steps(conn, provider: dict, history: list[dict], actor: str, tz_
         try:
             msg = chat_completion(provider, messages, tool_specs if tools_supported and budget_left else None)
         except AIError as exc:
-            # Many local models reject the `tools` field; degrade to a read-only snapshot.
             if tools_supported and not trace and exc.status in (400, 404, 422, 501):
                 tools_supported = False
                 messages[0]["content"] = system + NO_TOOLS_NOTE.format(snapshot=_snapshot(conn))
@@ -539,7 +526,6 @@ def investigate_steps(conn, provider: dict, history: list[dict], actor: str, tz_
         if not calls or not tools_supported or not budget_left:
             reply = _clean(msg.get("content"))
             if not reply and trace and not wrap_up_sent:
-                # It stopped without writing anything: ask once, plainly, for the answer.
                 messages.append({"role": "user", "content": WRAP_UP})
                 wrap_up_sent = True
                 try:

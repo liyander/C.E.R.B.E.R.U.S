@@ -8,7 +8,6 @@ from datetime import datetime, timedelta, timezone
 
 from .db import ago, get_integration, iso, now, parse_ts
 
-# Noise-suppression rules (set when an analyst marks something as a false positive), cached briefly.
 _suppress_cache: tuple[float, list] = (0.0, [])
 
 
@@ -40,7 +39,6 @@ def matches_suppression(rule_id: str, title: str, rules: list[dict]) -> dict | N
 
 CORRELATION_WINDOW_MINUTES = 60
 INCIDENT_MIN_SEVERITY = 4
-# Inventory-style findings are stored but never open an incident on their own.
 NON_INCIDENT_TYPES = {"vulnerability", "alert_resolved"}
 INCIDENT_STATUSES = ("open", "investigating", "contained", "resolved", "false_positive")
 
@@ -121,7 +119,6 @@ def ingest_event(conn, ev: dict) -> dict:
 
 def _correlate(conn, asset_id, source_ip, rule_id, event_type, severity, ts, title, demo):
     """Attach to a live incident on the same asset + source IP (or same rule), else open one."""
-    # Window is relative to the event's own time so late or replayed events still group.
     event_time = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     cutoff = iso(event_time - timedelta(minutes=CORRELATION_WINDOW_MINUTES))
     where = "status IN ('open', 'investigating') AND asset_id IS ? AND last_seen >= ? AND demo = ?"
@@ -138,7 +135,6 @@ def _correlate(conn, asset_id, source_ip, rule_id, event_type, severity, ts, tit
 
     if match:
         effective = severity if event_type not in NON_INCIDENT_TYPES else 0
-        # The incident is named after its most severe event, not whichever arrived first.
         conn.execute(
             "UPDATE incidents SET event_count = event_count + 1, severity = MAX(severity, ?), "
             "title = CASE WHEN ? > severity THEN ? ELSE title END, "
@@ -153,7 +149,6 @@ def _correlate(conn, asset_id, source_ip, rule_id, event_type, severity, ts, tit
         "event_count, demo) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
         (title, severity, asset_id, source_ip, rule_id, ts, ts, int(demo)),
     )
-    # Noise suppression: if this matches a rule an analyst created, resolve it immediately.
     if not demo:
         hit = matches_suppression(rule_id, title, suppressions(conn))
         if hit:
@@ -301,7 +296,6 @@ def triage_stats(conn) -> dict:
         f"SELECT COUNT(*) AS open, SUM(assignee = '') AS unassigned, SUM(triaged_at = '') AS untriaged, "
         f"SUM(due_at != '' AND due_at < ?) AS overdue, SUM(ai_verdict = 'malicious') AS malicious FROM incidents WHERE {active}",
         (now(),)).fetchone()
-    # Mean hours to acknowledge and to resolve, over incidents closed in the last 7 days.
     times = conn.execute(
         "SELECT AVG((julianday(ack_at) - julianday(first_seen)) * 24) AS ack, "
         "AVG((julianday(resolved_at) - julianday(first_seen)) * 24) AS resolve, COUNT(*) AS closed "

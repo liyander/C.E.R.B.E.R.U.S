@@ -98,7 +98,6 @@ def recipients(conn, rule: dict) -> list[str]:
     return list(dict.fromkeys(chosen + extra))
 
 
-# ---------- measuring ----------
 
 def current(conn) -> dict[str, list[dict]]:
     """Everything each measure currently shows: [{item, title, value, href}], highest first."""
@@ -150,7 +149,7 @@ def evaluate(conn, only: str = "") -> list[dict]:
         for h in over:
             last = conn.execute("SELECT value, sent_at FROM alert_log WHERE rule_id = ? AND item = ? AND test = 0 ORDER BY id DESC LIMIT 1", (rule["id"], h["item"])).fetchone()
             if rule["metric"] == "incident" and last:
-                continue  # an incident is one event: it is emailed once
+                continue
             if not last or last["sent_at"] < store.ago(hours=rule.get("cooldown_hours", 6)) or h["value"] >= last["value"] + 10:
                 due.append(h)
         if not due:

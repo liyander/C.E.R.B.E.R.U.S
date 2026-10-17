@@ -63,7 +63,6 @@ def throttle(key: str, limit: int = MAX_FAILURES, seconds: int = LOCK_SECONDS) -
 
 
 def check_password(row, password: str) -> bool:
-    # Hash even when the user is unknown so timing doesn't reveal usernames.
     salt = row["salt"] if row else "00" * 16
     candidate = hash_password(password, salt)
     return bool(row and row["pw_hash"] and hmac.compare_digest(candidate, row["pw_hash"]))

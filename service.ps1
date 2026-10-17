@@ -1,4 +1,3 @@
-# Register or remove a background startup task for the current Windows user.
 param([ValidateSet("Install", "Remove")][string]$Action = "Install", [int]$Port = 8787)
 $ErrorActionPreference = "Stop"
 $name = "CERBERUS"

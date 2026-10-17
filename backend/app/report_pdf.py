@@ -11,7 +11,6 @@ from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from fpdf.fonts import FontFace
 
-# fontTools is chatty about font tables it leaves out when embedding a subset.
 logging.getLogger("fontTools").setLevel(logging.ERROR)
 
 INK = (12, 23, 25)
@@ -24,7 +23,6 @@ PANEL = (244, 247, 247)
 LOGO = Path(__file__).parent / "assets" / "logo.png"
 BRAND_FONT = Path(__file__).parent / "assets" / "fonts" / "BarlowCondensed-SemiBold.ttf"
 
-# (regular, bold, italic, monospace) - first complete set that exists wins
 FONT_SETS = [
     ("C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/segoeuib.ttf", "C:/Windows/Fonts/segoeuii.ttf", "C:/Windows/Fonts/consola.ttf"),
     ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -114,7 +112,6 @@ def build(title: str, requested_by: str, generated: str, question: str, markdown
     pdf.add_page()
     width = pdf.epw
 
-    # Cover band
     pdf.set_fill_color(*NAVY)
     pdf.rect(0, 0, pdf.w, 30, style="F")
     pdf.set_fill_color(*ACCENT)

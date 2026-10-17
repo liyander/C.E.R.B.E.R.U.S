@@ -32,10 +32,10 @@ log = logging.getLogger("cerberus.remote")
 
 KEY_DIR = os.path.join(DATA_DIR, "ssh")
 KEY_FILE = os.path.join(KEY_DIR, "cerberus_ed25519")
-CHAT_WAIT_SECONDS = 15 * 60       # how long a chat waits for a decision before giving up
-PLAN_TTL_HOURS = 24               # proposals made from a page wait this long
+CHAT_WAIT_SECONDS = 15 * 60
+PLAN_TTL_HOURS = 24
 DEFAULT_TIMEOUT = 120
-LONG_TIMEOUT = 1800               # package upgrades
+LONG_TIMEOUT = 1800
 MAX_OUTPUT = 60_000
 MAX_PENDING_PER_SERVER = 20
 
@@ -62,7 +62,6 @@ CREATE TABLE IF NOT EXISTS server_commands (
 CREATE INDEX IF NOT EXISTS idx_server_commands_status ON server_commands(status, created_at);
 """
 
-# ---------- the command policy ----------
 
 _SEP = r"(?:^|[;&|(]\s*|\bthen\s+|\bdo\s+)"
 _SUDO = r"(?:sudo\s+(?:-\S+\s+)*)?"
@@ -133,7 +132,6 @@ def check(command: str) -> dict:
     return {"ok": True, "risk": "disruptive" if DISRUPTIVE.search(text) else "changes"}
 
 
-# ---------- servers and the CERBERUS key ----------
 
 def public_key() -> str:
     """CERBERUS's own SSH public key, created on first use. Admins add it to authorized_keys on each server."""
@@ -188,7 +186,6 @@ def save_server(conn, body: dict, actor: str) -> dict:
              "username": body["username"].strip()[:60], "auth": body.get("auth") if body.get("auth") in ("key", "password") else "key",
              "agent": (body.get("agent") or "").strip()[:120], "allow_changes": bool(body.get("allow_changes")), "enabled": bool(body.get("enabled", True)),
              "password": body.get("password") or (old or {}).get("password", ""), "sudo_password": body.get("sudo_password") or (old or {}).get("sudo_password", ""),
-             # A new address means a new machine: forget the pinned key.
              "host_key": (old or {}).get("host_key", "") if old and old["host"] == body["host"].strip() and old.get("port") == int(body.get("port") or 22) else ""}
     if body.get("clear_sudo_password"):
         entry["sudo_password"] = ""
@@ -215,7 +212,6 @@ def set_enabled(conn, enabled: bool, actor: str) -> None:
     audit(conn, actor, "server.commands_" + ("enabled" if enabled else "disabled"), {})
 
 
-# ---------- SSH ----------
 
 class RemoteError(Exception):
     pass
@@ -228,7 +224,7 @@ def _fingerprint(key) -> str:
 def _connect(server: dict, pin: bool = False):
     import paramiko
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # verified against the pinned key right after connecting
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     kwargs = {"hostname": server["host"], "port": int(server.get("port") or 22), "username": server["username"], "timeout": 15,
               "banner_timeout": 15, "auth_timeout": 20, "allow_agent": False, "look_for_keys": False}
     if server.get("auth") == "password":
@@ -282,7 +278,6 @@ def _exec(client, server: dict, command: str, timeout: int) -> dict:
         run = re.sub(r"(^|[;&|(]\s*)sudo\s+(?!-S\b)", r"\1sudo -S -p '' ", command)
     else:
         run = re.sub(r"(^|[;&|(]\s*)sudo\s+(?!-n\b)", r"\1sudo -n ", command)
-    # Package tools must never stop to ask a question.
     run = re.sub(r"(sudo (?:-S -p '' |-n ))(apt-get|apt|dpkg)\b", r"\1DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \2", run)
     run = "export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a LC_ALL=C.UTF-8 SYSTEMD_PAGER= PAGER=cat; " + run
     channel = client.get_transport().open_session()
@@ -299,7 +294,7 @@ def _exec(client, server: dict, command: str, timeout: int) -> dict:
             if data:
                 chunks.append(data)
                 size += len(data)
-                if size > MAX_OUTPUT * 4:  # keep reading would only waste memory; the head and tail are kept below
+                if size > MAX_OUTPUT * 4:
                     chunks = chunks[:2] + chunks[-20:]
         elif channel.exit_status_ready():
             break
@@ -322,10 +317,9 @@ def _exec(client, server: dict, command: str, timeout: int) -> dict:
     return {"output": text, "exit_code": code}
 
 
-# ---------- proposals, decisions, execution ----------
 
 _server_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
-_waiting: set[int] = set()  # proposals a chat is waiting on; it runs them itself once approved
+_waiting: set[int] = set()
 
 
 def propose(conn, server_name: str, command: str, reason: str, actor: str, origin: str = "chat",
@@ -371,7 +365,6 @@ def decide(conn, command_id: int, decision: str, note: str, user: str) -> dict:
         raise RemoteError("No such command")
     if row["status"] != "pending":
         raise RemoteError(f"This command is already {row['status']}.")
-    # Re-check against today's policy: the rules may have tightened since it was proposed.
     verdict = check(row["command"])
     if decision == "approved" and not verdict["ok"]:
         decision, note = "denied", f"Refused by policy: {verdict['why']}"
@@ -404,7 +397,7 @@ def execute(command_id: int) -> dict:
             finally:
                 client.close()
             status = "done" if result["exit_code"] == 0 else "failed"
-        except Exception as exc:  # report every failure to the admin and the analyst rather than raising in a worker
+        except Exception as exc:
             result, status = {"output": f"Could not run it: {exc}", "exit_code": None}, "failed"
     with db() as conn:
         conn.execute("UPDATE server_commands SET status = ?, exit_code = ?, output = ?, finished_at = ? WHERE id = ?",

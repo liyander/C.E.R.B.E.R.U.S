@@ -18,10 +18,10 @@ from concurrent.futures import ThreadPoolExecutor
 from . import grafana, store
 
 SELECTOR = '{service_name="appsec-agent"}'
-REQUEST = "Web Request"  # the event an agent writes for a request it judged
+REQUEST = "Web Request"
 SEVERITIES = ("Critical", "High", "Medium", "Low", "Info")
 ACTIONS = ("Prevent", "Detect")
-LIMIT = 5000  # the most lines Loki returns for one query
+LIMIT = 5000
 _cache: dict[tuple, tuple[float, list[dict]]] = {}
 _lock = threading.Lock()
 _requests: dict[str, dict] = {}
@@ -178,11 +178,6 @@ def summary(cfg: dict, *, hours=24, action="", text="", limit=15, recorded: dict
                 "not the real client. Requests of type '" + UNCLASSIFIED + "' come from the web server's access log for assets whose detailed events go to the cloud only."}
 
 
-# ---------- what the portal knows and the event stream does not ----------
-#
-# Which assets exist, which profile protects them and which agent enforces a profile are settings
-# held in the open-appsec portal, which has no documented API. They change rarely, so an admin
-# records them once (Integrations page); everything live is still read from the agents' events.
 
 ASSET_FIELDS = ("name", "address", "profile")
 AGENT_FIELDS = ("id", "profile", "kind", "installed")
@@ -212,7 +207,7 @@ def inventory(conn) -> dict:
 def live_agents(cfg: dict) -> dict[str, dict]:
     """Agents seen in the event stream in the last 7 days, by agent ID: server, version, restarts, last policy load."""
     agents: dict[str, dict] = {}
-    for e in agent_events(cfg):  # newest first
+    for e in agent_events(cfg):
         if not e["agent"]:
             continue
         row = agents.setdefault(e["agent"], {"host": e["host"], "version": e["version"], "starts": 0, "policy": None, "seen": e["time"]})
@@ -222,11 +217,6 @@ def live_agents(cfg: dict) -> dict[str, dict]:
     return agents
 
 
-# ---------- the gateways' own access logs: a second witness ----------
-#
-# The web server each agent sits in logs every request, including the ones the agent blocked
-# (they are answered with HTTP 403). That shows traffic even for an asset whose security events
-# are not in the agent's output, as long as the asset is the only one behind that server.
 
 GATEWAY = '{service_name="appsec-nginx"}'
 _ACCESS = ' |~ "HTTP/[0-9.]+\\" [0-9]{3} "'
@@ -285,7 +275,7 @@ def all_requests(cfg: dict, hours: int, recorded: dict | None = None) -> list[di
         blocked, live = gateway_blocked(cfg, hours), live_agents(cfg)
     except grafana.GrafanaError:
         return events
-    servers: dict[str, list[str]] = {}  # server -> assets behind it
+    servers: dict[str, list[str]] = {}
     profile_server = {a["profile"]: live[a["id"]]["host"] for a in recorded["agents"] if a.get("profile") and a["id"] in live}
     for asset in recorded["assets"]:
         server = profile_server.get(asset.get("profile", ""))
@@ -298,7 +288,7 @@ def all_requests(cfg: dict, hours: int, recorded: dict | None = None) -> list[di
     for b in blocked:
         behind = servers.get(b["host"], [])
         if (b["host"], int(b["ns"] // 10**9), b["path"]) in seen:
-            continue  # the agent already reported this one, with full detail
+            continue
         silent = [name for name in behind if name not in reporting]
         asset = behind[0] if len(behind) == 1 else silent[0] if len(silent) == 1 else ""
         if not asset:

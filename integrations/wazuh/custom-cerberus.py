@@ -15,9 +15,8 @@ import urllib.error
 import urllib.request
 
 LOG_FILE = "/var/ossec/logs/integrations.log"
-# Wazuh rule groups -> CERBERUS event types. First match wins; anything else uses the first group.
 EVENT_TYPES = (
-    ("vulnerability-detector", "vulnerability"),   # inventory finding: stored, never opens an incident
+    ("vulnerability-detector", "vulnerability"),
     ("authentication_failed", "authentication_failure"),
     ("authentication_failures", "authentication_failure"),
     ("authentication_success", "authentication_success"),

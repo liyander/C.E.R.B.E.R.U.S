@@ -6,9 +6,6 @@ from pydantic import BaseModel, Field
 from . import auth, mailer, mfa
 from .db import audit, db, now, set_integration
 
-# Status for "a system CERBERUS depends on failed" (the AI model, Grafana, Wazuh, the mail server).
-# Deliberately not 502 or 504: proxies and tunnels in front of CERBERUS replace those responses with
-# their own error page, which throws away the explanation the user needs to see.
 UPSTREAM_FAILED = 424
 
 router = APIRouter(prefix="/api/v1")
@@ -84,7 +81,6 @@ class AnnouncementBody(BaseModel):
     email: bool = False
 
 
-# ---------- helpers ----------
 
 def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
@@ -141,7 +137,6 @@ def _check_unique(conn, username: str | None, email: str | None, except_id: int 
         raise HTTPException(409, "Another account already uses that email address")
 
 
-# ---------- sign-in, verification, password reset ----------
 
 @router.get("/auth/state")
 def auth_state(request: Request):
@@ -157,7 +152,6 @@ def auth_setup(body: SetupBody, request: Request, response: Response):
     with db() as conn:
         if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]:
             raise HTTPException(409, "An admin account already exists")
-        # The person performing first-run setup is trusted as the first, verified admin.
         user_id = auth.create_user(conn, body.username, body.password, email=body.email, role="admin", verified=True)
         audit(conn, body.username, "auth.setup", {"client": client_ip(request)})
         set_cookie(request, response, auth.create_session(conn, user_id))
@@ -171,7 +165,6 @@ def auth_login(body: LoginBody, request: Request, response: Response):
         if not user:
             audit(conn, body.username[:64], "auth.login_failed", {"client": client_ip(request)})
             raise HTTPException(401, "Wrong username or password")
-        # Account state is only revealed after the password was correct.
         if user["disabled"]:
             raise HTTPException(403, "This account is disabled. Contact an admin.")
         if not user["email_verified"]:
@@ -252,7 +245,6 @@ def auth_forgot(body: ForgotBody, request: Request):
             link = f"{app_url(conn, request)}/#/reset?token={token}"
             mailer.send(conn, "reset", [row["email"]], mailer.reset_email(row["username"], link))
         audit(conn, ident[:64], "auth.forgot", {"client": client_ip(request), "matched": bool(row)})
-    # Same answer whether or not the account exists.
     return {"ok": True}
 
 
@@ -295,7 +287,6 @@ def auth_reset(body: TokenBody, request: Request):
         if not row:
             raise HTTPException(404, BAD_LINK)
         auth.set_password(conn, row["id"], body.password)
-        # Using a link sent to the address also proves the address is theirs.
         conn.execute("UPDATE users SET email_verified = 1 WHERE id = ?", (row["id"],))
         auth.consume_token(conn, body.token)
         audit(conn, row["username"], "auth.password_reset", {"client": client_ip(request)})
@@ -323,7 +314,6 @@ def account_password(body: PasswordChange, request: Request, response: Response,
     return {"ok": True}
 
 
-# ---------- user management (admin) ----------
 
 def _public_user(row) -> dict:
     return {"id": row["id"], "username": row["username"], "email": row["email"], "role": row["role"],
@@ -362,7 +352,6 @@ def users_create(body: UserCreate, request: Request, admin=Admin):
         configured = mailer.is_configured(mailer.config(conn))
         if not body.password and not configured:
             raise HTTPException(409, "Email is not configured yet, so set an initial password for this user.")
-        # Without email there is nothing to verify against; the admin vouches for the account.
         user_id = auth.create_user(conn, body.username, body.password, email=body.email, role=body.role,
                                    verified=not configured)
         if configured:
@@ -388,7 +377,6 @@ def users_update(user_id: int, body: UserUpdate, request: Request, admin=Admin):
         if body.email is not None and body.email.lower() != row["email"]:
             _check_unique(conn, None, body.email, except_id=user_id)
             configured = mailer.is_configured(mailer.config(conn))
-            # Admins editing their own address stay verified so a mail problem cannot lock them out.
             verified = body.email_verified is True or not configured or user_id == admin["id"]
             conn.execute("UPDATE users SET email = ?, email_verified = ? WHERE id = ?",
                          (body.email.lower(), int(verified), user_id))
@@ -397,7 +385,6 @@ def users_update(user_id: int, body: UserUpdate, request: Request, admin=Admin):
                 _send_verification(conn, request, _user_or_404(conn, user_id), invited_by=admin["username"])
                 changed["mail"] = "verification"
             elif configured and user_id == admin["id"]:
-                # Their own address needs no verification step, but a confirmation proves mail reaches it.
                 mailer.send(conn, "address_added", [body.email], mailer.address_added_email(row["username"], body.email.lower()))
                 changed["mail"] = "confirmation"
         elif body.email_verified is not None:
@@ -458,7 +445,6 @@ def users_delete(user_id: int, admin=Admin):
     return {"ok": True}
 
 
-# ---------- email settings (admin) ----------
 
 @router.get("/integrations/email")
 def email_get(admin=Admin):
@@ -477,14 +463,12 @@ def email_save(body: EmailSettings, admin=Admin):
         cfg = body.model_dump()
         cfg["app_url"] = cfg["app_url"].rstrip("/")
         if cfg["provider"] == "gmail":
-            # Gmail only needs the address and an app password; the server details are fixed.
             address = cfg["from_email"].lower()
             cfg.update(host="smtp.gmail.com" if address else "", port=587, security="starttls",
                        username=address, from_email=address, password=cfg["password"].replace(" ", ""))
             if cfg["password"] and not (len(cfg["password"]) == 16 and cfg["password"].isalnum()):
                 raise HTTPException(422, "A Gmail app password is 16 letters (shown as four groups of four). "
                                          "Your normal Google password will not work here.")
-        # A blank password keeps the saved one, but never carries it to a different server or login.
         if not cfg["password"] and (cfg["host"], cfg["username"]) == (current.get("host"), current.get("username")):
             cfg["password"] = current.get("password", "")
         set_integration(conn, "email", cfg)
@@ -504,7 +488,6 @@ def email_test(admin=Admin):
     return {"ok": True, "to": admin["email"]}
 
 
-# ---------- announcements (admin) and notifications (everyone) ----------
 
 @router.post("/announcements")
 def announcement_create(body: AnnouncementBody, admin=Admin):

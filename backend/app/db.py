@@ -203,8 +203,6 @@ def parse_ts(value) -> str:
 
 def connect() -> sqlite3.Connection:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    # Autocommit: a request can hold its connection across a slow model call
-    # without keeping a write lock open.
     conn = sqlite3.connect(DB_PATH, timeout=10, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -220,7 +218,6 @@ def db():
         conn.close()
 
 
-# One row per call to an AI model: what it was for, who asked, how many tokens and how long it took.
 USAGE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS ai_usage (
     id INTEGER PRIMARY KEY,
@@ -265,7 +262,6 @@ def init_db() -> None:
         secrets_store.migrate(conn, DATA_DIR)
 
 
-# Columns added after v0.1; applied to databases created by older versions.
 USER_COLUMNS = {
     "email": "TEXT NOT NULL DEFAULT ''",
     "email_verified": "INTEGER NOT NULL DEFAULT 0",
@@ -276,24 +272,22 @@ USER_COLUMNS = {
 }
 
 
-# Incident columns added for triage, prioritisation and the response workflow.
 INCIDENT_COLUMNS = {
-    "priority": "INTEGER NOT NULL DEFAULT 0",          # 0-100, highest first in the work queue
-    "priority_meta": "TEXT NOT NULL DEFAULT '{}'",     # how the score was made up
-    "assignee": "TEXT NOT NULL DEFAULT ''",            # username of the analyst who owns it
-    "due_at": "TEXT NOT NULL DEFAULT ''",              # response deadline from its priority
-    "ack_at": "TEXT NOT NULL DEFAULT ''",              # when someone first took it on
+    "priority": "INTEGER NOT NULL DEFAULT 0",
+    "priority_meta": "TEXT NOT NULL DEFAULT '{}'",
+    "assignee": "TEXT NOT NULL DEFAULT ''",
+    "due_at": "TEXT NOT NULL DEFAULT ''",
+    "ack_at": "TEXT NOT NULL DEFAULT ''",
     "resolved_at": "TEXT NOT NULL DEFAULT ''",
     "close_reason": "TEXT NOT NULL DEFAULT ''",
-    "ai_verdict": "TEXT NOT NULL DEFAULT ''",          # malicious | suspicious | benign | noise
-    "ai_confidence": "TEXT NOT NULL DEFAULT ''",       # high | medium | low
+    "ai_verdict": "TEXT NOT NULL DEFAULT ''",
+    "ai_confidence": "TEXT NOT NULL DEFAULT ''",
     "ai_reason": "TEXT NOT NULL DEFAULT ''",
-    "ai_technique": "TEXT NOT NULL DEFAULT ''",        # MITRE ATT&CK, e.g. "T1110 Brute Force"
+    "ai_technique": "TEXT NOT NULL DEFAULT ''",
     "triaged_at": "TEXT NOT NULL DEFAULT ''",
     "escalated_at": "TEXT NOT NULL DEFAULT ''",
 }
 
-# One row per analyst note or logged action on an incident.
 NOTES_SCHEMA = """
 CREATE TABLE IF NOT EXISTS incident_notes (
     id INTEGER PRIMARY KEY,
@@ -326,7 +320,6 @@ def _migrate(conn) -> None:
     for name, ddl in (("owner", "TEXT NOT NULL DEFAULT ''"), ("notes", "TEXT NOT NULL DEFAULT ''"), ("exposure", "TEXT NOT NULL DEFAULT ''")):
         if name not in ast:
             conn.execute(f"ALTER TABLE assets ADD COLUMN {name} {ddl}")
-    # The single v0.1 "enforcer" account becomes the first admin and is trusted as verified.
     conn.execute("UPDATE users SET role = 'admin', email_verified = 1 WHERE role = 'enforcer'")
 
 

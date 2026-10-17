@@ -54,7 +54,6 @@ def normalize_webhook(payload: dict) -> list[dict]:
         values = alert.get("valueString") or alert.get("values")
         events.append({
             "source": "grafana",
-            # One event per firing and one per resolution of the same alert instance.
             "source_event_id": f"{fingerprint}:{started}:{'resolved' if resolved else 'firing'}",
             "event_type": "alert_resolved" if resolved else "grafana_alert",
             "severity": 1 if resolved else SEVERITY_MAP.get(str(labels.get("severity", "")).lower(), 5),
@@ -112,7 +111,6 @@ def test_connection(cfg: dict) -> dict:
 
 
 _REAL_FS = '{fstype!~"tmpfs|overlay|squashfs|ramfs|devtmpfs"}'
-# Standard node_exporter / blackbox_exporter metrics; anything a setup lacks simply comes back empty.
 HEALTH_QUERIES = {
     "up": "up",
     "cpu_pct": '100 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100',
@@ -304,7 +302,6 @@ def log_patterns(lines: list[dict], top: int = 15) -> list[dict]:
     return sorted(groups.values(), key=lambda e: e["count"], reverse=True)[:top]
 
 
-# metric -> (PromQL template with {sel} / {and_sel}, unit, fixed "high" threshold or None)
 HISTORY_METRICS = {
     "load": ("node_load1{{{sel}}}", "", None),
     "cpu": ('100 - avg by (instance) (rate(node_cpu_seconds_total{{mode="idle"{and_sel}}}[5m])) * 100', "%", 80.0),
@@ -375,7 +372,6 @@ def metric_history(cfg: dict, metric: str, host: str = "", hours: int = 24, tz_m
             "latest": round(values[-1], 2), "min": round(min(values), 2), "avg": round(sum(values) / len(values), 2),
             "peak": {"value": round(peak, 2), "time": local(peak_ts)},
             "high_threshold": round(threshold, 2),
-            # A period already under way when the window opens has no known start: say so, never invent one.
             "high_periods": [{"from": ("before " + local(p["start"])) if p["start"] == points[0][0] else local(p["start"]),
                               "to": "now (still high)" if p["end"] == points[-1][0] else local(p["end"] + step),
                               "peak": round(p["peak"], 2), "minutes": (p["end"] - p["start"] + step) // 60,
@@ -427,7 +423,6 @@ def query_loki(cfg: dict, logql: str, minutes: int = 60, limit: int = 30) -> dic
     return {"backend": "loki", "query": logql, "window_minutes": minutes, "lines": lines[:clamp(limit, 1, 50, 30)]}
 
 
-# ---------- who logged in (SSH), from the servers' own auth logs in Loki ----------
 
 _ACCEPTED = re.compile(r"Accepted (\S+) for (\S+) from (\S+) port \d+")
 _FAILED = re.compile(r"(?:Failed (\S+) for (?:invalid user )?(\S+) from (\S+) port \d+|Invalid user (\S*) from (\S+))")

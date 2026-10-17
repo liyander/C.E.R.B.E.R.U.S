@@ -35,7 +35,6 @@ CACHE = os.path.join(DATA_DIR, "patches.json")
 TTL_HOURS = 20
 KERNEL = re.compile(r"^linux-(image|modules|headers|tools|cloud-tools|buildinfo|hwe|objects)")
 
-# Fix-by policy: (label, days, why). The first rule that applies wins.
 POLICY = (
     ("kev_exposed", 2, "Exploited in the wild and the machine faces the internet"),
     ("attacked", 2, "The machine is under attack now (Attack forecast) and the flaw is serious"),
@@ -59,7 +58,6 @@ _running = threading.Event()
 _progress = {"done": 0, "total": 0, "started": 0.0, "error": ""}
 
 
-# ---------- the cache ----------
 
 def _load() -> dict:
     try:
@@ -80,7 +78,6 @@ def _fresh(entry: dict | None) -> bool:
     return bool(entry) and entry.get("checked", 0) > time.time() - TTL_HOURS * 3600 and (not entry.get("lang") or entry.get("v") == 2)
 
 
-# ---------- what Wazuh says is installed and vulnerable ----------
 
 def _release(os_full: str) -> tuple[str, str]:
     """'Ubuntu 22.04.5 LTS (Jammy Jellyfish)' -> ('jammy', 'Ubuntu:22.04:LTS')."""
@@ -124,7 +121,6 @@ def inventory(conn) -> tuple[list[dict], list[str]]:
     return insights._cached(("patch-inventory",), 600, load)
 
 
-# ---------- asking Ubuntu and OSV ----------
 
 def _lp(client: httpx.Client, params: dict) -> list[dict]:
     r = client.get(f"{LP}/+archive/primary", params={**params, "ws.size": 50, "order_by_date": "true"})
@@ -151,7 +147,7 @@ def _check_package(client: httpx.Client, series: str, eco: str, binary: str, ver
     """Source package, newest shipped version, and which CVEs the installed and newest versions still have."""
     entries = _lp(client, {"ws.op": "getPublishedBinaries", "binary_name": binary, "exact_match": "true",
                            "distro_arch_series": f"{LP}/{series}/amd64"})
-    if not entries:  # architecture-independent packages are published under 'all' on amd64 too, but try without the filter
+    if not entries:
         entries = [e for e in _lp(client, {"ws.op": "getPublishedBinaries", "binary_name": binary, "exact_match": "true"})
                    if e["distro_arch_series_link"].split("/")[-2] == series]
     if not entries:
@@ -163,7 +159,7 @@ def _check_package(client: httpx.Client, series: str, eco: str, binary: str, ver
     sources = [e for e in _lp(client, {"ws.op": "getPublishedSources", "source_name": source, "exact_match": "true",
                                         "distro_series": f"{LP}/{series}", "status": "Published"}) if e["pocket"] in ("Security", "Updates", "Release")]
     latest = sources[0]["source_package_version"] if sources else exact
-    osv_name = re.sub(r"^linux-signed(-|$)", lambda m: "linux" + m.group(1), source)  # signed kernels share the kernel's security data
+    osv_name = re.sub(r"^linux-signed(-|$)", lambda m: "linux" + m.group(1), source)
     now_cves = _osv_ids(client, osv_name, eco, exact)
     after = _osv_ids(client, osv_name, eco, latest) if latest != exact else now_cves
     return {"checked": time.time(), "source": source, "osv": osv_name, "installed": exact, "latest": latest,
@@ -193,7 +189,7 @@ def _check_lang(client: httpx.Client, kind: str, name: str, version: str) -> dic
         cves = [a for a in [d["id"], *d.get("aliases", [])] if a.startswith("CVE-")]
         fixed = [e["fixed"] for a in d.get("affected", []) if a["package"]["name"].lower() == name.lower() and a["package"]["ecosystem"] == eco
                  for rg in a.get("ranges", []) for e in rg.get("events", []) if e.get("fixed") and _vkey(e["fixed"]) > _vkey(version)]
-        final = [v for v in fixed if not re.search(r"(rc|a|b|dev|alpha|beta|pre)\.?\d*$", v, re.I)] or fixed  # prefer final releases
+        final = [v for v in fixed if not re.search(r"(rc|a|b|dev|alpha|beta|pre)\.?\d*$", v, re.I)] or fixed
         for cve in cves:
             if fixed:
                 fixes[cve] = min(final, key=_vkey)
@@ -231,7 +227,6 @@ def refresh(force: bool = False) -> None:
                 key = f"{r['series']}|{r['package']}|{r['version']}"
                 if force or not _fresh(cache["packages"].get(key)):
                     todo[key] = r
-        # Small packages first so most of the page fills in quickly; kernels (thousands of CVEs) last.
         order = sorted(todo.items(), key=lambda kv: (bool(KERNEL.match(kv[1]["package"])), len(kv[1]["cves"])))
         _progress.update(done=0, total=len(order), started=time.time(), error="; ".join(problems))
         with httpx.Client(timeout=60, follow_redirects=True, headers={"User-Agent": "CERBERUS patch check"}) as client:
@@ -252,7 +247,6 @@ def refresh(force: bool = False) -> None:
                         _progress["done"] += 1
                         if _progress["done"] % 5 == 0:
                             _save(cache)
-            # Ubuntu Pro fixes for the CVEs that have no free patch (not for kernels: Pro kernel fixes come as Livepatch).
             for r in rows:
                 entry = cache["packages"].get(f"{r['series']}|{r['package']}|{r['version']}") or {}
                 if not entry.get("source") or entry.get("lang") or KERNEL.match(r["package"]):
@@ -268,7 +262,7 @@ def refresh(force: bool = False) -> None:
             _save(cache)
         with db() as conn:
             set_setting(conn, "patches_last_check", now())
-    except Exception as exc:  # a background job must never take the server down
+    except Exception as exc:
         log.warning("patch check failed: %s", exc)
         _progress["error"] = str(exc)[:200]
     finally:
@@ -289,7 +283,6 @@ def tick() -> None:
         ensure_fresh()
 
 
-# ---------- deadlines ----------
 
 def _rule(c: dict, exposed: bool, attacked: bool) -> tuple[str, int, str]:
     sev = c["severity"]
@@ -352,13 +345,12 @@ def plan(conn) -> dict:
             elif c["cve"] in entry.get("affected_now", []) or entry.get("latest") != entry.get("installed"):
                 status, fixed = "available", entry.get("latest", "")
             else:
-                status, fixed = "none", ""  # Wazuh and Ubuntu's data disagree and no newer version exists: treat as unpatched
+                status, fixed = "none", ""
             key, days, why = _rule(c, r["agent"] in exposed, r["agent"] in attacked)
             try:
                 found = datetime.fromisoformat(c["found"].replace("Z", "+00:00")) if c["found"] else now_
             except ValueError:
                 found = now_
-            # The clock starts when the reason for the deadline began: CISA listing it, or the attack starting; otherwise when Wazuh found it.
             start = found
             if key in ("kev", "kev_exposed") and (c.get("kev") or {}).get("dateAdded"):
                 try:
@@ -368,7 +360,7 @@ def plan(conn) -> dict:
             elif key == "attacked":
                 start = max(found, attacked[r["agent"]])
             due = start + timedelta(days=days)
-            if status == "unused":  # not exploitable while the machine runs another kernel
+            if status == "unused":
                 key, why, due = "unused", "Kernel installed but not running: remove it when convenient", max(due, now_ + timedelta(days=90))
             urgency = _urgency(due, now_)
             items.append({"cve": c["cve"], "agent": r["agent"], "package": r["package"], "installed": r["version"], "fixed": fixed, "status": status,
@@ -445,7 +437,6 @@ def _command(m: dict) -> str:
     return "\n".join(parts)
 
 
-# ---------- the page ----------
 
 def page(conn, q: dict) -> dict:
     ensure_fresh()
@@ -510,7 +501,7 @@ def page(conn, q: dict) -> dict:
             continue
         g = groups.setdefault((i["agent"], i["package"], i["status"]), {"items": [], "due": i["due"], "urgency": i["urgency"], "overdue": False, "fixed": ""})
         g["items"].append(i)
-        g["fixed"] = max(g["fixed"], i["fixed"] or "", key=_vkey) if i["lang"] else g["fixed"] or i["fixed"]  # one upgrade to the highest fix covers all
+        g["fixed"] = max(g["fixed"], i["fixed"] or "", key=_vkey) if i["lang"] else g["fixed"] or i["fixed"]
         if i["due"] < g["due"]:
             g["due"], g["urgency"] = i["due"], i["urgency"]
         g["overdue"] = g["overdue"] or i["overdue"]

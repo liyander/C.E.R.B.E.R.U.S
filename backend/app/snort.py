@@ -12,12 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from . import grafana, store
 
-# Alerts arrive through each server's system journal, and they are found in two places:
-#  - where the log shipper labels the program, a small stream of its own (fast to read);
-#  - where it does not, somewhere in that server's whole journal, recognised by the shape of the line.
-# Every lookup asks both and adds the answers together.
 SOURCES = (('{program="snort"', ""), ('{job="loki.source.journal.system", program=""', ' |= "[**] [" |= "[Priority: "'))
-# 10/14-09:02:40.59 [**] [1:1917:16] "message" [**] [Classification: x] [Priority: 3] {UDP} 1.2.3.4:55 -> 5.6.7.8:1900
 PARSE = ('regexp `\\[(?P<sig>\\d+:\\d+):\\d+\\] "(?P<msg>[^"]*)" \\[\\*\\*\\] (\\[Classification: (?P<kind>[^\\]]*)\\] )?\\[Priority: (?P<prio>\\d)\\] '
          '\\{(?P<proto>[\\w-]+)\\} (?P<src>\\d+\\.\\d+\\.\\d+\\.\\d+)(:\\d+)? -> (?P<dst>\\d+\\.\\d+\\.\\d+\\.\\d+)(:(?P<dport>\\d+))?`')
 LINE = re.compile(r'\[(\d+:\d+):\d+\] "([^"]*)" \[\*\*\] (?:\[Classification: ([^\]]*)\] )?\[Priority: (\d)\] \{([\w-]+)\} (\S+?)(?::(\d+))? -> (\S+?)(?::(\d+))?$')
@@ -79,9 +74,8 @@ def _both(run, queries: list[str]) -> list:
 def counts(cfg: dict, by: tuple, minutes: int, top: int = 50, keep: int = 60, public_source: bool = False, **filters) -> list[tuple[dict, int]]:
     """How many alerts per value of the given fields, largest first. Remembered for a minute."""
     def load():
-        # Counting per sensor needs no parsing, which keeps the long look-back cheap.
         parse = "" if by == ("host",) and not public_source else " | " + PARSE + ' | prio != ""'
-        if public_source:  # only alerts whose source address is on the internet
+        if public_source:
             parse += ' | src !~ `10\\..*|127\\..*|172\\.(1[6-9]|2[0-9]|3[01])\\..*|192\\.168\\..*|22[4-9]\\..*|23[0-9]\\..*|255\\..*`'
         def run(raw):
             query = f"topk({int(top)}, sum by ({', '.join(by)}) (count_over_time({raw}{parse} [{int(minutes)}m])))"

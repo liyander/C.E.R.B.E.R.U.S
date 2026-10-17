@@ -24,20 +24,20 @@ log = logging.getLogger("cerberus.watch")
 DEFAULTS = {
     "enabled": False,
     "interval_minutes": 5,
-    "tz_offset": 0,                 # minutes from UTC, captured from the admin's browser
+    "tz_offset": 0,
     "checks": {"targets": True, "probes": True, "disk": True, "memory": True, "cpu": True, "load": True, "log_errors": True, "tools": True},
     "disk_pct": 90,
     "memory_pct": 90,
     "cpu_pct": 90,
-    "load_factor": 1.0,             # load is high when it exceeds CPU cores x this
-    "log_errors_5m": 200,           # error-level lines from one host in five minutes
+    "load_factor": 1.0,
+    "log_errors_5m": 200,
     "notify_in_app": True,
     "notify_email": True,
     "email_min_severity": 7,
-    "renotify_hours": 6,            # a condition that keeps flapping is announced at most this often
+    "renotify_hours": 6,
     "ai_writeup": True,
     "digest_enabled": True,
-    "digest_hour": 8,               # local hour of the daily digest
+    "digest_hour": 8,
 }
 CHECK_NAMES = {"targets": "Scrape targets down", "probes": "Web checks down", "disk": "Disk usage", "memory": "Memory usage",
                "cpu": "CPU usage", "load": "System load", "log_errors": "Error lines in logs", "tools": "Security tools reporting"}
@@ -118,7 +118,6 @@ def collect(cfg: dict, s: dict) -> list[dict]:
     return found
 
 
-# ---------- are the security tools themselves working? ----------
 
 def _tool_health(cfg: dict, add) -> None:
     """Sensors, agents and log shipping that have gone quiet or are failing. Each check stands alone."""
@@ -128,7 +127,7 @@ def _tool_health(cfg: dict, add) -> None:
     def guarded(name, check):
         try:
             check()
-        except Exception as exc:  # one source failing must not hide the others
+        except Exception as exc:
             log.warning("tool health check %s skipped: %s", name, exc)
 
     def snort_sensors():
@@ -273,7 +272,6 @@ def run(trigger: str = "schedule", tz_offset: int | None = None) -> dict:
                 new = []
                 for f in found:
                     prior = known.get(f["key"])
-                    # Still true and already known. A dismissed finding stays dismissed while its condition lasts.
                     if prior and prior["status"] in ("firing", "dismissed"):
                         conn.execute("UPDATE watch_findings SET last_seen = ?, title = ?, detail = ?, severity = ? WHERE key = ?",
                                      (stamp, f["title"], f["detail"], f["severity"], f["key"]))
@@ -289,12 +287,11 @@ def run(trigger: str = "schedule", tz_offset: int | None = None) -> dict:
                         "incident_id = excluded.incident_id",
                         (f["key"], f["kind"], f["asset"], f["title"], f["detail"], f["severity"], stamp, stamp, result["incident_id"]))
                     f["incident_id"] = result["incident_id"]
-                    # A condition that flaps is tracked every time but announced only once per quiet period.
                     if not (prior and prior["last_notified"] and prior["last_notified"] >= quiet_after):
                         new.append(f)
                 current_keys = {f["key"] for f in found}
                 gone = [k for k in known.values() if k["status"] in ("firing", "dismissed") and k["key"] not in current_keys]
-                recovered = [k for k in gone if k["status"] == "firing"]  # a dismissed finding recovers quietly
+                recovered = [k for k in gone if k["status"] == "firing"]
                 for k in gone:
                     conn.execute("UPDATE watch_findings SET status = 'recovered', last_seen = ? WHERE key = ?", (stamp, k["key"]))
                     store.ingest_event(conn, {"source": "watch", "source_event_id": f"{k['key']}:recovered:{stamp}", "asset": k["asset"],
@@ -305,7 +302,6 @@ def run(trigger: str = "schedule", tz_offset: int | None = None) -> dict:
                                      (k["incident_id"], k["key"]))
                 writeup = _writeup(conn, new, s["tz_offset"]) if new and s["ai_writeup"] else ""
                 for f in new:
-                    # A newly announced finding gets the fresh note; one that merely flapped keeps its earlier note.
                     conn.execute("UPDATE watch_findings SET ai_note = ? WHERE key = ?", (writeup, f["key"]))
                     if writeup and f.get("incident_id"):
                         conn.execute("UPDATE incidents SET summary = ?, summary_meta = ? WHERE id = ? AND summary = ''",
@@ -381,7 +377,7 @@ def _tick() -> None:
     today = local.strftime("%Y-%m-%d")
     if s["digest_enabled"] and local.hour >= s["digest_hour"] and last_digest != today:
         with db() as conn:
-            set_setting(conn, "watch_last_digest", today)  # set first so a failure cannot cause a mail loop
+            set_setting(conn, "watch_last_digest", today)
             send_digest(conn, s)
 
 
@@ -392,7 +388,7 @@ def _loop() -> None:
         for job in (backups.tick, wazuh.tick, detections.tick, login_detection.tick, predict.tick, triage.tick, alerting.tick, dashboard.tick, patches.tick, reports.tick, _tick):
             try:
                 job()
-            except Exception:  # the scheduler must survive any single bad pass
+            except Exception:
                 log.exception("background job %s failed", job.__module__)
 
 

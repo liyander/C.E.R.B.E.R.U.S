@@ -18,7 +18,6 @@ import re
 from . import insights, remote, store
 from .db import audit
 
-# action -> how to present and build it. "build" returns (command, undo_command) given ip/asset.
 FIREWALL_COMMENT = "CERBERUS"
 
 
@@ -37,7 +36,6 @@ def _block_cmds(ip: str, incident_ref: str) -> tuple[str, str]:
 
 
 def _forensics_cmd(ip: str) -> str:
-    # Read-only: what this address has been doing on the box right now.
     return (f"echo '== current connections =='; sudo ss -tnp | grep {ip} || echo none; "
             f"echo '== recent auth log =='; sudo grep -F {ip} /var/log/auth.log 2>/dev/null | tail -n 40 || echo none")
 
@@ -63,7 +61,6 @@ def available(conn, inc: dict) -> dict:
     read_servers = [s for s in servers if s["host_key"]]
     ip = inc.get("source_ip") or ""
     external = ip and insights.is_public(ip)
-    # Has this IP already been blocked (a done/approved block command for it)?
     blocked = bool(ip) and bool(conn.execute(
         "SELECT 1 FROM server_commands WHERE action = 'block_ip' AND status IN ('done', 'approved', 'running') AND command LIKE ? LIMIT 1",
         (f"%deny from {ip} %",)).fetchone())
@@ -92,7 +89,6 @@ def run_action(conn, incident_id: int, action: str, server: str, actor: str) -> 
         raise ValueError("This incident has no valid source IP to act on")
 
     if not spec["executable"]:
-        # Record the recommendation and leave it to the operator.
         how = {"disable_account": "On the identity source (AD, LDAP or the host): disable or lock the account, then force a password reset.",
                "isolate_host": "On your network: move the host to a quarantine VLAN or apply a restrictive firewall policy, keeping your own management access."}
         from . import triage
@@ -130,7 +126,6 @@ def incident_commands(conn, incident_id: int) -> list[dict]:
         (incident_id,))]
 
 
-# ---------- playbooks ----------
 
 PLAYBOOKS = {
     "ssh_bruteforce": {

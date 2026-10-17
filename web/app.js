@@ -1,5 +1,3 @@
-/* CERBERUS web UI — dependency-free SPA. All dynamic text goes through esc():
-   event and log content is attacker-influenced and must never reach innerHTML raw. */
 (() => {
   'use strict';
 
@@ -8,7 +6,7 @@
   const REFRESH_MS = 30000;
   const FIREWALL_REFRESH_MS = 10000;
   const CHAT_KEY = 'cerberus-chat-id';
-  const APP_VERSION = '0.2.0'; // must match VERSION in backend/app/main.py
+  const APP_VERSION = '0.2.0';
   const state = { user: null, chat: [], chatId: null, convos: [], busy: false, live: null, abort: null, presets: [], hidden: {}, sorts: {}, apps: [], appsLoaded: false, navKey: '', emailReady: false, aiReady: false, aiTools: [], investigating: false };
 
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => (
@@ -91,15 +89,13 @@
   };
   const icon = (name, size = 18) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.700" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
 
-  // The CERBERUS mark: a three-peak pulse crossing a dotted threshold line.
   const logo = () => `<svg class="logo-mark" viewBox="0 0 143 100" role="img" aria-label="CERBERUS"><g class="logo-dash"><rect x="4.0" y="34" width="7" height="4.500"/><rect x="17.6" y="34" width="7" height="4.500"/><rect x="31.2" y="34" width="7" height="4.500"/><rect x="44.8" y="34" width="7" height="4.500"/><rect x="58.4" y="34" width="7" height="4.500"/><rect x="72.0" y="34" width="7" height="4.500"/><rect x="85.6" y="34" width="7" height="4.500"/><rect x="99.2" y="34" width="7" height="4.500"/><rect x="112.8" y="34" width="7" height="4.500"/><rect x="126.4" y="34" width="7" height="4.500"/></g><path d="M0 77H27.300L44.500 32 56.700 62 67 0H76L86.300 62 98.500 32 115.700 77H143V86H108.800L98.500 59 82.800 99.500 71.500 29 60.200 99.500 44.500 59 34.200 86H0Z" fill="currentColor"/></svg>`;
   const ACCENTS = [['teal', 'Teal', '#0f766e'], ['indigo', 'Indigo', '#4f46e5'], ['blue', 'Blue', '#2563eb'], ['violet', 'Violet', '#7c3aed']];
   const pref = {
     get(key, fallback) { try { return localStorage.getItem(`cerberus-${key}`) || fallback; } catch { return fallback; } },
-    set(key, value) { try { localStorage.setItem(`cerberus-${key}`, value); } catch { /* storage blocked */ } },
+    set(key, value) { try { localStorage.setItem(`cerberus-${key}`, value); } catch {} },
   };
 
-  // ---------- plumbing ----------
 
   function errorDetail(data, status) {
     let detail = data && data.detail;
@@ -115,7 +111,7 @@
       credentials: 'same-origin',
     });
     let data = null;
-    try { data = await res.json(); } catch { /* empty body */ }
+    try { data = await res.json(); } catch {}
     if (res.status === 401 && state.user) { state.user = null; boot(); }
     if (!res.ok) throw new Error(errorDetail(data, res.status));
     return data;
@@ -131,7 +127,6 @@
   }
   const fail = (err) => toast(err.message || String(err), true);
 
-  // Resolves to false when cancelled, otherwise { note, value }.
   function confirmDialog({ title, text, ok = 'Confirm', danger = false, note = false, input = null }) {
     return new Promise((resolve) => {
       const d = document.createElement('dialog');
@@ -142,7 +137,6 @@
         <div class="row end"><button type="button" class="btn" data-cancel>Cancel</button>
         <button class="btn ${danger ? 'danger-solid' : 'primary'}" value="yes">${esc(ok)}</button></div></form>`;
       document.body.appendChild(d);
-      // Cancel is not a submit button, so pressing Enter in the text field always means "confirm".
       $('[data-cancel]', d).addEventListener('click', () => d.close('no'));
       $('form', d).addEventListener('submit', (e) => { e.preventDefault(); d.close('yes'); });
       d.addEventListener('close', () => {
@@ -156,7 +150,6 @@
     });
   }
 
-  // Ctrl+K: jump to a page, search events or hand a question to the AI.
   function openPalette() {
     if ($('dialog.palette') || !$('.shell')) return;
     const d = document.createElement('dialog');
@@ -205,7 +198,7 @@
   const theme = {
     current() {
       let saved = null;
-      try { saved = localStorage.getItem('cerberus-theme'); } catch { /* storage blocked */ }
+      try { saved = localStorage.getItem('cerberus-theme'); } catch {}
       return saved || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
     },
     apply() {
@@ -218,16 +211,15 @@
       if (btn) { btn.innerHTML = icon(t === 'dark' ? 'sun' : 'moon'); btn.title = t === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'; }
     },
     toggle() {
-      try { localStorage.setItem('cerberus-theme', this.current() === 'dark' ? 'light' : 'dark'); } catch { /* storage blocked */ }
+      try { localStorage.setItem('cerberus-theme', this.current() === 'dark' ? 'light' : 'dark'); } catch {}
       this.apply();
     },
   };
 
-  // ---------- markdown (escape-first) for model output ----------
 
   function inline(text) {
     const parts = String(text).split('`');
-    if (parts.length % 2 === 0) parts.push(`\`${parts.pop()}`, ''); // unmatched backtick: keep it literal
+    if (parts.length % 2 === 0) parts.push(`\`${parts.pop()}`, '');
     return parts.map((seg, i) => {
       if (i % 2) return `<code>${esc(seg)}</code>`;
       return esc(seg)
@@ -337,9 +329,7 @@
     return `<div class="md">${out.join('')}</div>`;
   }
 
-  // ---------- shell ----------
 
-  // [section, [[route, label, icon, adminOnly]]]
   const NAV = [
     ['', [['dashboard', 'Dashboard', 'grid'], ['overview', 'Overview', 'home']]],
     ['Investigate', [['console', 'Enforcer console', 'chat'], ['incidents', 'Incidents', 'alert'], ['queue', 'Queue', 'inbox'], ['events', 'Events', 'list'], ['ip', 'IP lookup', 'globe'], ['approvals', 'Approvals', 'check']]],
@@ -353,9 +343,7 @@
   const ADMIN_VIEWS = new Set(NAV.flatMap(([, items]) => items).filter((item) => item[3]).map((item) => item[0]));
   const TITLES = { account: 'My account', ...Object.fromEntries(NAV.flatMap(([, items]) => items).map(([id, text]) => [id, text])) };
 
-  // The application chosen in the navbar: null means "All applications", the normal CERBERUS menu.
   const activeApp = () => state.apps.find((a) => a.id === pref.get('app', 'all')) || null;
-  // Product logo on a white tile so it reads in both themes; the corner dot shows whether it is connected.
   const appLogo = (a, dot = true) => `<span class="app-logo"><img src="${esc(a.logo)}" alt="" width="18" height="18">${dot ? `<i class="${a.connected ? 'on' : 'off'}" title="${a.connected ? 'Connected' : 'Not connected yet'}"></i>` : ''}</span>`;
   const appButton = () => { const a = activeApp(); return `${a && a.logo ? appLogo(a, false) : icon('grid', 16)}<span id="app-name">${esc(a ? a.name : 'All applications')}</span>${icon('chevron', 13)}`; };
   const NAV_BADGES = { incidents: 1, watch: 1, approvals: 1 };
@@ -459,7 +447,6 @@
   function setBadges(o) {
     const set = (name, n, tone = '') => { const el = $(`[data-badge="${name}"]`); if (el) { el.textContent = n > 99 ? '99+' : n; el.hidden = !n; if (name !== 'notifications') el.className = `count ${tone}`; } };
     set('incidents', o.open_incidents, o.critical ? 'crit' : 'quiet');
-    // Small status rows at the bottom of the sidebar.
     const row = (id, tone, text) => { const el = $(id); if (el) { $('.dot', el).className = `dot ${tone}`; $('small', el).textContent = text; } };
     row('#ss-ai', o.ai_provider ? 'on' : 'off', o.ai_provider ? (o.ai_provider.model || o.ai_provider.name) : 'Not connected');
     const firing = (o.watch && o.watch.firing) || 0;
@@ -492,11 +479,9 @@
       <td class="mono">${esc(i.source_ip || '—')}</td><td>${i.event_count}</td><td class="nowrap" data-v="${Date.parse(i.last_seen) || 0}">${agoCell(i.last_seen)}</td></tr>`).join('')}
   </table></div></div>`;
 
-  // ---------- views: each returns an HTML string or { html, mount } ----------
 
   const views = {};
 
-  // Severity is a status scale, so it uses the fixed status colours, always paired with a text label.
   const SEVERITIES = [['critical', 'Critical'], ['high', 'High'], ['medium', 'Medium'], ['low', 'Low']];
   const hourTotal = (h) => h.critical + h.high + h.medium + h.low;
   const niceMax = (n) => {
@@ -512,10 +497,6 @@
   const clock = (ms) => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
   const dayName = (ms) => new Date(ms).toLocaleDateString([], { weekday: 'short' });
 
-  // Stacked columns over time, shared by every time chart in the app.
-  // data: buckets with a start time `t` (ms) and one count per series key.
-  // opts: series [[key, label, cssClass]] (first is drawn on top), group (legend toggle group), span (ms per bucket),
-  //       unit [singular, plural], empty (text), axis(bucket, index, count) -> label or '', onPick(bucket) for click-through.
   const charts = new Map();
   function stackChart(id, data, opts) {
     charts.set(id, () => stackChart(id, data, opts));
@@ -534,7 +515,7 @@
     const y = (v) => m.t + ph - (v / max) * ph;
     const band = pw / data.length;
     const bw = Math.min(24, Math.max(2, band - (band > 9 ? 4 : 1)));
-    const gap = band > 9 ? 2 : 0; // 2px surface gap between stacked segments when there is room for it
+    const gap = band > 9 ? 2 : 0;
     let grid = ''; let hits = ''; let bars = ''; let labels = '';
     for (const t of [0, max / 2, max]) {
       grid += `<line class="${t ? 'grid' : 'axis'}" x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}"/><text class="tick" x="${m.l - 7}" y="${y(t) + 4}" text-anchor="end">${fmtNum(t)}</text>`;
@@ -579,13 +560,11 @@
   }
   window.addEventListener('resize', () => charts.forEach((draw) => draw()));
 
-  // Legend that doubles as a filter: click a series to hide or show it.
   const legend = (group, series, totals) => `<div class="legend">${series.map(([k, name, cls]) =>
     `<button type="button" class="lg ${(state.hidden[group] || new Set()).has(k) ? 'off' : ''}" data-action="legend" data-group="${group}" data-key="${k}" title="Click to hide or show"><i class="sw ${cls}"></i>${name} <b>${fmtNum(totals[k] || 0)}</b></button>`).join('')}</div>`;
 
   const SEV_SERIES = SEVERITIES.map(([k, name]) => [k, name, `sev-${k}`]);
   const sevTotals = (buckets) => Object.fromEntries(SEVERITIES.map(([k]) => [k, buckets.reduce((n, b) => n + b[k], 0)]));
-  // Hourly buckets from the API -> chart buckets, optionally merged `per` hours at a time.
   function sevBuckets(hourly, per = 1) {
     const out = [];
     hourly.forEach((h, i) => {
@@ -673,7 +652,6 @@
     return { html, mount: () => sevChart('events-chart', buckets, 1) };
   };
 
-  // ---------- console ----------
 
   const SUGGESTIONS = [
     'Summarise the open incidents by priority and tell me what to look at first.',
@@ -690,10 +668,9 @@
     query_prometheus: 'Query Prometheus', query_loki: 'Query Loki',
   };
 
-  // Conversations are saved by the server as it answers; the browser only remembers which one is open.
   function rememberChat(id) {
     state.chatId = id;
-    try { if (id) sessionStorage.setItem(CHAT_KEY, id); else sessionStorage.removeItem(CHAT_KEY); } catch { /* storage blocked */ }
+    try { if (id) sessionStorage.setItem(CHAT_KEY, id); else sessionStorage.removeItem(CHAT_KEY); } catch {}
   }
   function loadChat() {
     try { state.chatId = Number(sessionStorage.getItem(CHAT_KEY)) || null; } catch { state.chatId = null; }
@@ -737,7 +714,6 @@
     renderHistory();
   }
 
-  // A command the analyst wants to run: shown in full, approved or denied by an admin, then its result.
   const RISK_TONE = { 'read-only': 'ok', changes: 'medium', disruptive: 'critical' };
   const cmdCard = (t) => {
     const decided = t.status && t.status !== 'pending';
@@ -853,11 +829,9 @@
       </div>`,
       mount() {
         const q = params.get('q');
-        // A question handed over from another page always starts its own conversation.
         if (q && !state.busy) clearChat();
         renderChat(true);
         refreshHistory();
-        // After a reload, reopen the conversation that was on screen.
         if (state.chatId && !state.chat.length && !state.busy) openChat(state.chatId).catch(() => rememberChat(null));
         const input = $('#chat-input');
         mentionBox(input);
@@ -876,7 +850,6 @@
   async function sendChat(text) {
     text = String(text || '').trim();
     if (!text || state.busy) return;
-    // The server replaces an unanswered question on the next send; mirror that so both sides stay in step.
     while (state.chat.length && state.chat[state.chat.length - 1].error) state.chat.pop();
     if (state.chat.length && state.chat[state.chat.length - 1].role === 'user') state.chat.pop();
     state.chat.push({ role: 'user', content: text });
@@ -896,7 +869,7 @@
       if (res.status === 401) { state.user = null; boot(); return; }
       if (!res.ok) {
         let data = null;
-        try { data = await res.json(); } catch { /* not JSON */ }
+        try { data = await res.json(); } catch {}
         if (res.status === 404 && state.chatId) { rememberChat(null); throw new Error('That conversation no longer exists. Send your question again to start a new one.'); }
         throw new Error(state.stale ? 'The CERBERUS server is running an older version. Restart it, then try again.' : errorDetail(data, res.status));
       }
@@ -935,9 +908,7 @@
     }
   }
 
-  // ---------- incidents / events ----------
 
-  // ---------- incident queue (triage & prioritisation) ----------
 
   const VERDICT = { malicious: ['Malicious', 'critical'], suspicious: ['Suspicious', 'high'], benign: ['Benign', 'low'], noise: ['Noise', 'low'] };
   const verdictBadge = (v, conf) => v ? `<span class="badge ${VERDICT[v] ? VERDICT[v][1] : ''}" title="${esc(conf || '')} confidence">${VERDICT[v] ? VERDICT[v][0] : esc(v)}</span>` : '<span class="badge" title="Not triaged yet">untriaged</span>';
@@ -1078,7 +1049,6 @@
     const noteKind = { note: ['note', 'user'], triage: ['AI triage', 'spark'], assign: ['assignment', 'users'], status: ['status', 'check'], escalate: ['escalation', 'alert'], action: ['response', 'shield'], report: ['closure report', 'inbox'] };
     const notesHtml = (i.notes || []).map((n) => { const k = noteKind[n.kind] || ['note', 'chat']; return `<div class="note n-${esc(n.kind)}">
       <span class="note-ico">${icon(k[1], 13)}</span><div><div class="note-head"><strong>${esc(n.author)}</strong><span class="muted small">${esc(k[0])} · ${fmtTime(n.created_at)}</span></div><div class="note-body">${md(n.body)}</div></div></div>`; }).join('');
-    // response section
     let responseCard = '';
     if (rsp) {
       const av = rsp.available;
@@ -1091,7 +1061,6 @@
         <div class="acts" style="margin-top:10px">${actsHtml}</div>
         ${cmds ? `<div class="icmds" style="margin-top:12px">${cmds}</div>` : ''}
         <p class="muted small" style="margin:10px 0 0">Every action is proposed; an admin approves each command before it runs.</p></div>`;
-      // playbook
       const pb = rsp.playbook;
       const steps = pb.steps.map((st, idx) => {
         if (st.note) return `<li class="pb-note">${icon('alert', 13)} ${esc(st.text)}</li>`;
@@ -1149,7 +1118,6 @@
     const filters = `q=${enc(f.q)}&min_severity=${enc(f.min)}&source=${enc(f.source)}`;
     const [events, stats, o] = await Promise.all([
       api(`/events?${filters}&start=${enc(f.start)}&end=${enc(f.end)}`), api(`/events/stats?hours=${f.range === '7d' ? 168 : 24}&${filters}`), overview]);
-    // Link to this page with some filters changed; the time window is dropped unless asked for.
     const link = (change = {}) => {
       const p = new URLSearchParams();
       const next = { q: f.q, source: f.source, min: f.min === '1' ? '' : f.min, range: f.range === '7d' ? '7d' : '', ...change };
@@ -1182,7 +1150,6 @@
     return { html, mount: () => sevChart('events-volume', buckets, per, keep) };
   };
 
-  // ---------- values with units, and line charts, for application dashboards ----------
 
   const sig = (v) => { const a = Math.abs(v); const s = a >= 100 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : a >= 1 ? v.toFixed(2) : a < 1e-4 ? '0' : String(Number(v.toPrecision(2))); return s.includes('.') && !s.includes('e') ? s.replace(/\.?0+$/, '') : s; };
   const scaled = (v, base, units) => { let i = 0; let n = Math.abs(v); while (n >= base && i < units.length - 1) { n /= base; i += 1; } return `${v < 0 ? '-' : ''}${sig(n)}${units[i]}`; };
@@ -1232,7 +1199,6 @@
       let d = ''; let pen = false;
       s.v.forEach((v, i) => {
         if (v === null) { pen = false; return; }
-        // A lone point between gaps still needs to be visible.
         const alone = !pen && (i + 1 >= s.v.length || s.v[i + 1] === null);
         d += alone ? `M${(x(i) - 1).toFixed(1)} ${y(v).toFixed(1)}h2` : `${pen ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`;
         pen = true;
@@ -1273,7 +1239,6 @@
       ${b.note ? `<p class="muted small" style="margin:8px 0 0">${esc(b.note)}</p>` : ''}</div>`;
   };
 
-  // ---------- dashboards laid out as in the original: panels keep their place on a 24-column grid ----------
 
   const TONE_VAR = { critical: 'var(--bad)', high: 'var(--high)', medium: 'var(--warn)', ok: 'var(--ok)' };
   const tintIcon = (name, tint, size = 18, cls = '') => `<i class="nav-ico ${cls}" style="--c:var(--cat-${Number(tint) || 1})">${icon(ICONS[name] ? name : 'chart', size)}</i>`;
@@ -1302,7 +1267,6 @@
     return `<div class="dcell ${w <= 4 ? 'd2' : w <= 6 ? 'd3' : w <= 8 ? 'd4' : w <= 12 ? 'd6' : 'd12'} dk-${esc(b.type)}" style="--gx:${(b.x || 0) + 1};--gw:${w};--gy:${(b.y || 0) + 1};--gh:${b.h || 8}">${html}</div>`;
   }).join('')}</div>`;
 
-  // ---------- @ in the chat: point the analyst at one source ----------
 
   let aiSources = null;
   async function loadSources() {
@@ -1310,7 +1274,6 @@
     return aiSources;
   }
   const SOURCE_ICON = { wazuh: 'shield', grafana: 'chart', waf: 'globe', snort: 'bell', logs: 'terminal', metrics: 'activity', incidents: 'alert' };
-  // Known @sources in a sent message become chips; anything else stays as typed.
   const withMentions = (text) => esc(text).replace(/(^|[^\w@])@([A-Za-z][\w-]{1,24})/g, (all, lead, word) => (
     (aiSources || []).some((s) => s.key === word.toLowerCase()) ? `${lead}<span class="mention">@${word}</span>` : all));
   function mentionBox(input) {
@@ -1351,7 +1314,6 @@
     input.addEventListener('input', update);
     input.addEventListener('click', update);
     input.addEventListener('blur', () => setTimeout(close, 150));
-    // Runs before the "Enter sends" handler, so Enter picks a source while the list is open.
     input.addEventListener('keydown', (e) => {
       if (pop.hidden) return;
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); e.stopImmediatePropagation(); sel = (sel + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length; draw(); }
@@ -1361,25 +1323,17 @@
     pop.addEventListener('mousedown', (e) => { const b = e.target.closest('.mention-item'); if (b) { e.preventDefault(); pick(items[Number(b.dataset.i)]); } });
   }
 
-  // ---------- tag anything, then discuss it with the AI ----------
-  //
-  // Every row on a data page (an incident, an event, a log line, a firewall block, a failed check) carries a small
-  // tag button. Tagged items collect in a tray that follows you between pages; "Discuss with AI" opens a side chat
-  // that starts from exactly those items. The chat is a normal analyst conversation, so it is saved in the history
-  // and the analyst can still run its own lookups.
 
   const TAG_PAGES = /^(overview|incidents|incidents\/detail|events|assets|approvals|audit|logs|watch|infrastructure|app\/.*)$/;
   const TAG_LIMIT = 8;
   const talk = { tags: [], sent: new Set(), id: null, msgs: [], busy: false, steps: [], abort: null };
-  // Tags survive a page reload in this tab; they are gone when the tab closes.
   const TAGS_KEY = 'cerberus-tags';
   try {
     const kept = JSON.parse(sessionStorage.getItem(TAGS_KEY) || '{}') || {};
     talk.tags = (kept.tags || []).filter((t) => t && t.key && t.text).slice(0, 8);
     talk.sent = new Set(kept.sent || []); talk.id = kept.id || null; talk.msgs = (kept.msgs || []).slice(-30);
-  } catch { /* storage blocked */ }
-  const saveTags = () => { try { sessionStorage.setItem(TAGS_KEY, JSON.stringify({ tags: talk.tags, sent: [...talk.sent], id: talk.id, msgs: talk.msgs.slice(-30) })); } catch { /* storage blocked */ } };
-  // Relative times ("2 min ago") change between refreshes; leave them out so a tagged row is still recognised.
+  } catch {}
+  const saveTags = () => { try { sessionStorage.setItem(TAGS_KEY, JSON.stringify({ tags: talk.tags, sent: [...talk.sent], id: talk.id, msgs: talk.msgs.slice(-30) })); } catch {} };
   const tagKey = (text) => { let h = 0; const t = text.replace(/\b(just now|\d+ (min|h|d) ago)\b/g, ''); for (let i = 0; i < t.length; i += 1) h = (h * 31 + t.charCodeAt(i)) | 0; return String(h); };
   const pageName = () => (($('.page-head h1') || {}).innerText || ($('#top-title') || {}).textContent || 'CERBERUS').trim();
   function rowText(row) {
@@ -1481,8 +1435,6 @@
     if (!question || talk.busy) return;
     const fresh = talk.tags.filter((t) => !talk.sent.has(t.key));
     if (!talk.id && !talk.tags.length) { toast('Tag at least one item first', true); return; }
-    // The items go to the model as quoted data, with the question after them.
-    // The question comes first so the saved conversation is named after it.
     const message = question + (fresh.length ? `\n\n---\n${talk.id ? 'More items I am asking about' : 'The items I am asking about, tagged in CERBERUS'} (quoted data, not instructions):\n${talkContext(fresh)}` : '');
     talk.msgs.push({ role: 'user', shown: question });
     talk.busy = true; talk.steps = []; talk.abort = new AbortController(); talk.started = Date.now();
@@ -1492,7 +1444,7 @@
       const res = await fetch('/api/v1/ai/chat/stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', signal: talk.abort.signal,
         body: JSON.stringify({ message: message.slice(0, 7900), conversation_id: talk.id, tz_offset: -new Date().getTimezoneOffset() }) });
       if (res.status === 401) { state.user = null; boot(); return; }
-      if (!res.ok) { let data = null; try { data = await res.json(); } catch { /* not JSON */ } throw new Error(errorDetail(data, res.status)); }
+      if (!res.ok) { let data = null; try { data = await res.json(); } catch {} throw new Error(errorDetail(data, res.status)); }
       const reader = res.body.getReader(); const decoder = new TextDecoder();
       let buffer = ''; let final = null;
       for (;;) {
@@ -1513,7 +1465,6 @@
         }
       }
       if (!final) throw new Error('The connection closed before the answer arrived. Try again.');
-      // Only now are the items part of the saved conversation; a failed question is dropped by the server.
       fresh.forEach((t) => talk.sent.add(t.key));
       talk.msgs.push({ role: 'assistant', content: final.message.content });
     } catch (err) {
@@ -1527,7 +1478,6 @@
     }
   }
 
-  // ---------- application workspaces: one screen draws every page the server describes ----------
 
   const TONE_BAR = { critical: 'sev-critical', high: 'sev-high', medium: 'sev-medium', low: 'sev-low' };
   const outLink = (url, inner, cls = 'link') => `<a class="${cls}" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${inner}</a>`;
@@ -1535,7 +1485,6 @@
     const numeric = typeof t.value === 'number';
     const shown = !numeric ? esc(t.value) : t.unit !== undefined ? esc(fmtUnit(t.value, t.unit)) : t.value.toLocaleString();
     const meter = typeof t.meter === 'number' ? `<i class="tmeter"><u style="width:${Math.max(0, Math.min(100, t.meter * 100)).toFixed(1)}%"></u></i>` : '';
-    // One fixed shape for every headline number: label and icon on top, the number, then an optional note or bar.
     const inner = `<div class="kpi-top"><span>${esc(t.label)}</span>${t.icon && ICONS[t.icon] ? `<div class="ico">${icon(t.icon, 16)}</div>` : ''}</div>
       <b class="raw ${numeric ? '' : 'stat-text'}">${shown}</b>${t.hint ? `<small title="${esc(t.hint)}">${esc(t.hint)}</small>` : ''}${meter}`;
     return t.href ? `<a class="card stat kpi t-${esc(t.tone)}" href="${esc(t.href)}">${inner}</a>` : `<div class="card stat kpi still t-${esc(t.tone)}">${inner}</div>`;
@@ -1601,11 +1550,9 @@
     return drawPage(d, params, base, `${d.app_name} · ${d.label}`);
   };
 
-  // Cross-source pages (IP lookup, asset risk, vulnerability priority, AI usage) come from the server in the same shape.
   const insightView = (name) => async ({ params }) => drawPage(await api(`/insights/${name}${params.toString() ? `?${params}` : ''}`), params, `#/${name}`);
   ['patches', 'forecast', 'ip', 'risk', 'vulns', 'ai-usage'].forEach((name) => { views[name] = insightView(name); });
 
-  // Draws a page described by the server: filters, headline tiles, then charts and tables.
   function drawPage(d, params, base, topTitle = '') {
     d = { filters: [], tiles: [], blocks: [], ...d };
     const filters = d.filters.length ? `<form class="row app-filters" data-form="app-filter" data-base="${esc(base)}">${d.filters.map((f) => `<label class="fl"><span>${esc(f.label)}</span>${(f.kind === 'select'
@@ -1639,9 +1586,7 @@
       mount: () => { if (topTitle) $('#top-title').textContent = topTitle; drawAllLines(); } };
   }
 
-  // ---------- AI briefings ----------
 
-  // Ask the model for a short written briefing and show it in `target`. The server gathers the data.
   async function aiBrief(target, body, title) {
     const head = (extra = '') => `<div class="ai-head">${icon('spark', 16)}<b>${title}</b>${extra}</div>`;
     target.innerHTML = `<div class="card ai-card">${head()}<div class="working"><span class="spinner"></span><span>Reading the data…</span></div></div>`;
@@ -1653,18 +1598,15 @@
     } catch (err) {
       target.innerHTML = `<div class="callout">${esc(err.message)}</div>`;
     }
-    // Remembered so a background refresh of the page does not wipe it.
     if (target.id === 'ai-insight') state.insight = { key: current, html: target.innerHTML, text: target.dataset.text || '' };
   }
   const BRIEF_TITLES = { overview: 'AI brief: the last 24 hours', infrastructure: 'AI health brief', logs: 'AI summary of these logs', app_page: 'AI summary of this page',
     incidents: 'AI triage', incident: 'AI summary of this incident', events: 'AI summary of these events', assets: 'AI view of asset risk',
     approvals: 'AI notes on the pending approvals', audit: 'AI read of the audit log', insight: 'AI summary of this page' };
-  // Pages that get an AI button automatically: [what the server should collect, the button's words].
   const AI_PAGES = { incidents: ['incidents', 'AI triage'], 'incidents/detail': ['incident', 'AI summary'], events: ['events', 'Summarise with AI'], assets: ['assets', 'AI risk view'],
     approvals: ['approvals', 'AI notes'], audit: ['audit', 'Anything unusual?'], app: ['app_page', 'Summarize this page'],
     dashboard: ['overview', 'AI brief'], forecast: ['insight', 'AI forecast'], patches: ['insight', 'Summarize this page'], ip: ['insight', 'AI verdict'], risk: ['insight', 'Summarize this page'], vulns: ['insight', 'Summarize this page'], 'ai-usage': ['insight', 'Summarize this page'] };
 
-  // ---------- AI watch (scheduled analyst) ----------
 
   const KIND_ICON = { disk: 'server', memory: 'activity', cpu: 'activity', load: 'activity', probe: 'plug', target: 'plug', logerr: 'terminal', sensor: 'shield' };
 
@@ -1679,7 +1621,6 @@
     const recovered = w.findings.filter((x) => x.status === 'recovered');
     const band = (x) => (x.severity >= 9 ? 'critical' : x.severity >= 7 ? 'high' : 'medium');
     const critical = firing.filter((x) => x.severity >= 9).length;
-    // The analyst writes one note for all the findings of a check, so it is shown once, not on every finding.
     const notes = [...new Set(firing.map((x) => x.ai_note).filter(Boolean))];
     const ready = (ok, yes, no, href) => `<span class="${ok ? '' : 'warn'}">${ok ? icon('check', 13) : icon('alert', 13)} ${ok ? yes : (admin && href ? `<a href="${href}">${no}</a>` : no)}</span>`;
     const asked = (x) => encodeURIComponent(`${x.title}. Since when has this been the case, what is the likely cause, and what should I do?`);
@@ -1759,22 +1700,19 @@
     </div>`;
   };
 
-  // ---------- logs (Loki through Grafana) ----------
 
   const LOG_SERIES = [['error', 'Error', 'lvl-error'], ['warn', 'Warning', 'lvl-warn'], ['info', 'Info', 'lvl-info'], ['debug', 'Debug', 'lvl-debug'], ['other', 'No level', 'lvl-other']];
   const LEVEL_MATCH = { error: 'error|err|critical|crit|fatal|emerg|alert|panic', warn: 'warn|warning', info: 'info|notice|informational', debug: 'debug|trace' };
   const LOG_RANGES = [['15', '15 minutes'], ['60', '1 hour'], ['360', '6 hours'], ['1440', '24 hours']];
   const logqlText = (v) => String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  // Lines without a level label are classified from their text so problems still stand out.
   const lineLevel = (l) => (l.level !== 'other' ? l.level
     : /\b(error|fatal|panic|critical|failed|failure|denied|refused|segfault)\b/i.test(l.line) ? 'error' : /\bwarn(ing)?\b/i.test(l.line) ? 'warn' : 'other');
   const notConnected = (what, need) => empty(`${what} are not connected`, isAdmin() ? `Add your Grafana address, a service account token and the ${need} datasource under Integrations.`
     : `Ask an admin to connect Grafana with a ${need} datasource.`, isAdmin() ? '<div style="margin-top:14px"><a class="btn" href="#/integrations">Open Integrations</a></div>' : '', 'plug');
 
-  // Saved searches are kept in this browser only.
   const savedSearches = {
     all() { try { return JSON.parse(localStorage.getItem('cerberus-log-saves') || '[]'); } catch { return []; } },
-    set(list) { try { localStorage.setItem('cerberus-log-saves', JSON.stringify(list.slice(0, 12))); } catch { /* storage blocked */ } },
+    set(list) { try { localStorage.setItem('cerberus-log-saves', JSON.stringify(list.slice(0, 12))); } catch {} },
   };
 
   views.logs = async ({ overview, params }) => {
@@ -1786,7 +1724,6 @@
       tab: params.get('tab') === 'patterns' ? 'patterns' : 'explore', live: params.get('live') === '1' };
     const matchers = [f.job && `job="${logqlText(f.job)}"`, f.host && `host="${logqlText(f.host)}"`, f.program && `program="${logqlText(f.program)}"`].filter(Boolean);
     const levelFilter = LEVEL_MATCH[f.level] ? ` | detected_level=~"${LEVEL_MATCH[f.level]}"` : '';
-    // Text starting with "{" is taken as a full LogQL query; anything else means "lines containing".
     const raw = f.text.trim().startsWith('{');
     const query = raw ? f.text.trim() : `{${matchers.length ? matchers.join(', ') : 'job=~".+"'}}${levelFilter}${f.text ? ` |= "${logqlText(f.text)}"` : ''}`;
     const zoomed = Boolean(f.start && f.end);
@@ -1814,7 +1751,6 @@
     const saved = savedSearches.all().map((x) => `<span class="fchip saved"><a href="#/logs?${esc(x.q)}">${icon('star', 12)} ${esc(x.name)}</a>
       <button type="button" data-action="log-unsave" data-name="${esc(x.name)}" title="Remove this saved search" aria-label="Remove">${icon('close', 12)}</button></span>`);
 
-    // Facets: what the newest lines are made of, each row a one-click filter.
     const tally = (pick) => { const m = new Map(); data.lines.forEach((l) => { const v = pick(l); if (v) m.set(v, (m.get(v) || 0) + 1); }); return [...m].sort((a, b) => b[1] - a[1]).slice(0, 8); };
     const facet = (title, name, rows) => (rows.length ? `<div class="facet"><h4>${title}</h4>${rows.map(([v, n]) => `<button type="button" class="facet-row ${f[name] === v ? 'on' : ''}" data-action="log-filter" data-name="${name}" data-value="${esc(v)}">
       <span class="fr-name">${esc(name === 'level' ? LOG_SERIES.find(([k]) => k === v)[1] : v)}</span><span class="fr-bar"><i style="width:${Math.max(4, (n / rows[0][1]) * 100)}%"></i></span><span class="fr-n">${n}</span></button>`).join('')}</div>` : '');
@@ -1905,7 +1841,6 @@
     document.body.appendChild(d);
   }
 
-  // ---------- infrastructure (Prometheus through Grafana) ----------
 
   const meter = (label, value) => {
     if (value === undefined || value === null) return '';
@@ -1980,7 +1915,6 @@
       </table></div></div>` : empty('Nothing waiting', 'When the analyst recommends containment, the request appears here.', '', 'check')}`);
   };
 
-  // ---------- configuration ----------
 
   views.providers = async ({ id }) => {
     const { providers, presets } = await api('/ai/providers');
@@ -2161,7 +2095,6 @@ Authorization: Bearer &lt;token&gt;
         <div class="row">${planned.map((p) => `<span class="badge">${p}</span>`).join('')}</div></div>`);
   };
 
-  // ---------- main dashboard ----------
 
   const TONE_COLOR = { ok: 'var(--ok)', low: 'var(--info)', medium: 'var(--warn)', high: 'var(--high)', critical: 'var(--bad)' };
   const PANEL_STATE = { ok: 'Healthy', warn: 'Needs attention', critical: 'Critical', off: 'Not connected', error: 'Unreachable' };
@@ -2197,7 +2130,6 @@ Authorization: Bearer &lt;token&gt;
       <p class="muted small" style="margin:14px 2px 0">Updated ${fmtTime(d.generated)}.</p>`);
   };
 
-  // ---------- threat alert rules ----------
 
   const ruleSentence = (r, m, users) => {
     const names = r.users.map((id) => (users.find((u) => u.id === id) || {}).username).filter(Boolean);
@@ -2291,7 +2223,6 @@ Authorization: Bearer &lt;token&gt;
     };
   }
 
-  // Servers the analyst may run approved commands on.
   const keyLine = (pub) => `mkdir -p ~/.ssh && echo '${pub}' >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys`;
   const codeBox = (text, label = 'Copy') => `<div class="codebox"><pre>${esc(text)}</pre><button type="button" class="btn sm" data-action="copy-text" data-text="${esc(text)}">${icon('copy', 14)} ${esc(label)}</button></div>`;
   const CMD_FILTERS = [['all', 'All'], ['pending', 'Waiting'], ['done', 'Ran'], ['failed', 'Failed'], ['denied', 'Denied or expired']];
@@ -2432,7 +2363,6 @@ Authorization: Bearer &lt;token&gt;
     };
   }
 
-  // Attack forecasting: early warnings from the patterns that come before an intrusion.
   function intelCard(x) {
     return `<div class="card card-pad"><h2>IP threat intelligence ${x.greynoise_enabled || (x.abuseipdb_enabled && x.has_abuseipdb_key) ? '<span class="badge ok">on</span>' : '<span class="badge">off</span>'}</h2>
       <p class="muted" style="margin:6px 0 14px">Looks up external addresses against reputation sources, shown on the IP lookup page and used to rank incidents. Results are cached for 12 hours.</p>
@@ -2467,7 +2397,6 @@ Authorization: Bearer &lt;token&gt;
       </form></div>`;
   }
 
-  // Snort and WAF detections become CERBERUS events (and so incidents), with the noise controls an admin chooses.
   function detectionsCard(dt) {
     const s = dt.settings;
     const opt = (list, value) => list.map(([v, t]) => `<option value="${v}" ${String(v) === String(value) ? 'selected' : ''}>${t}</option>`).join('');
@@ -2491,7 +2420,6 @@ Authorization: Bearer &lt;token&gt;
       </form></div>`;
   }
 
-  // Scheduled daily or weekly report, emailed as a PDF.
   views.reports = async () => {
     const r = await api('/reports');
     const s = r.settings;
@@ -2660,7 +2588,6 @@ Authorization: Bearer &lt;token&gt;
           <td class="wrap"><div class="logline" title="Click to expand">${esc(JSON.stringify(r.detail))}</div></td></tr>`).join('')}</table></div></div>`);
   };
 
-  // ---------- actions ----------
 
   const actions = {
     async logout() { await api('/auth/logout', { method: 'POST' }); state.user = null; clearChat(); boot(); },
@@ -2927,7 +2854,7 @@ Authorization: Bearer &lt;token&gt;
     'talk-retry'() {
       const failed = talk.msgs[talk.msgs.length - 1];
       if (!failed || !failed.retry || talk.busy) return;
-      talk.msgs.splice(-2, 2);  // the question and its error; asking again puts the question back
+      talk.msgs.splice(-2, 2);
       return askTalk(failed.retry);
     },
     async 'talk-console'() {
@@ -3129,7 +3056,6 @@ Authorization: Bearer &lt;token&gt;
         const r = await api(`/commands/${el.dataset.id}/decision`, { method: 'POST', body: { decision: el.dataset.decision, note: answer.note } });
         toast(r.status === 'approved' ? 'Approved. It is running now.' : r.status === 'denied' ? 'Denied. It will not run.' : `Now ${r.status}`);
       } catch (err) { toast(err.message); }
-      // In a chat, the analyst's stream updates the card; elsewhere, redraw.
       if (!el.closest('#chat-log, .talk')) route({ soft: true });
     },
     async 'rule-test'(el) {
@@ -3336,7 +3262,6 @@ Authorization: Bearer &lt;token&gt;
       const out = $('#g-result');
       out.innerHTML = '<span class="spinner"></span> Testing…';
       const r = await api('/integrations/grafana/test', { method: 'POST' }).catch((err) => { out.textContent = ''; throw err; });
-      // Fill in datasource UIDs the first time so the user doesn't have to hunt for them.
       const pick = (type) => (r.datasources.find((d) => d.type === type) || {}).uid || '';
       const found = { prometheus_uid: body.prometheus_uid || pick('prometheus'), loki_uid: body.loki_uid || pick('loki') };
       if (found.prometheus_uid !== body.prometheus_uid || found.loki_uid !== body.loki_uid) {
@@ -3479,7 +3404,6 @@ Authorization: Bearer &lt;token&gt;
     const el = e.target.closest('[data-change]');
     if (el && changes[el.dataset.change]) Promise.resolve().then(() => changes[el.dataset.change](el)).catch(fail);
   });
-  // Click a column heading to sort by it; click again to reverse.
   function sortTable(th, dir) {
     const table = th.closest('table');
     table.querySelectorAll('tr.detail-row').forEach((r) => r.remove());
@@ -3535,10 +3459,7 @@ Authorization: Bearer &lt;token&gt;
     tip.style.top = `${box.top + box.height / 2}px`;
   });
 
-  // ---------- routing / boot ----------
 
-  // Charts are drawn to the width they have at that moment. The content area also changes width without the
-  // window resizing (the sidebar opening or collapsing), so every chart is redrawn whenever it does.
   let watchedView = null;
   function watchViewWidth() {
     const view = $('#view');
@@ -3564,7 +3485,6 @@ Authorization: Bearer &lt;token&gt;
     if (!state.appsLoaded) await loadApps();
     ensureShell();
     watchViewWidth();
-    // Opening an application page directly switches the sidebar to that application.
     if (key === 'app' && pref.get('app', 'all') !== id && state.apps.some((a) => a.id === id)) { pref.set('app', id); renderNav(); }
     state.navKey = key === 'app' ? `app/${id}/${sub || 'overview'}` : key;
     markNav();
@@ -3594,7 +3514,6 @@ Authorization: Bearer &lt;token&gt;
       if (result.mount) result.mount();
       decorateRows();
       renderTray();
-      // Every data page gets the same AI button and a place for its answer.
       const aiPage = key === 'app' ? AI_PAGES.app : AI_PAGES[current];
       const pageHead = $('.page-head', view);
       if (aiPage && pageHead && $('.row', pageHead) && !$('[data-action="ai-brief"]', view)) {
@@ -3620,7 +3539,6 @@ Authorization: Bearer &lt;token&gt;
   actions.reload = () => route();
   actions['reload-page'] = () => location.reload();
 
-  // Headline numbers count up when a page opens.
   function countUp(scope) {
     scope.querySelectorAll('.stat b:not(.raw)').forEach((el) => {
       const target = Number(el.textContent);
@@ -3635,19 +3553,16 @@ Authorization: Bearer &lt;token&gt;
     });
   }
 
-  // Keep live views fresh without disturbing anyone who is typing, reading an expanded row or mid-dialog.
   const AUTO_REFRESH = new Set(['dashboard', 'overview', 'watch', 'forecast', 'queue', 'incidents', 'incidents/detail', 'events', 'infrastructure', 'assets', 'approvals', 'audit']);
   async function refreshUser() { const s = await api('/auth/state'); if (s.user) state.user = s.user; }
   setInterval(() => {
     if (!state.user || document.hidden || state.investigating) return;
     const active = document.activeElement;
     const typing = active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName);
-    // The firewall pages follow live traffic too, unless someone has a row open to read it.
     const live = AUTO_REFRESH.has(current) || (/^app\/(openappsec|snort)\//.test(current) && !$('.detail-row'));
     if (live && !typing && !$('dialog[open]') && !$('.logline.open') && !String(getSelection())) route({ soft: true });
     else loadOverview().catch(() => {});
   }, REFRESH_MS);
-  // A blocked request should appear while you are still looking: the firewall pages re-check every 10 seconds.
   setInterval(() => {
     if (!state.user || document.hidden || state.investigating || !current.startsWith('app/openappsec/')) return;
     const active = document.activeElement;
@@ -3655,7 +3570,6 @@ Authorization: Bearer &lt;token&gt;
     route({ soft: true });
   }, FIREWALL_REFRESH_MS);
 
-  // The sign-in poster: a shield carrying the CERBERUS pulse, three sensors around it (one per head), drawn in ink, paper and the accent colour.
   const authArt = () => {
     const node = (x, y, name) => `<g class="art-float"><circle class="sa" cx="${x}" cy="${y}" r="40" fill="none" stroke-width="2.5" stroke-dasharray="4 7"/><circle class="ai" cx="${x}" cy="${y}" r="30"/>
       <g transform="translate(${x - 16} ${y - 16}) scale(1.34)" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="${ICONS[name]}"/></g></g>`;
@@ -3686,7 +3600,6 @@ Authorization: Bearer &lt;token&gt;
       ${chip(318, 556, 206, 'Three heads on watch', 'Logs · metrics · endpoints', '<circle class="ai" cx="26" cy="26" r="13"/><circle cx="26" cy="26" r="4.500" fill="#fff"/>')}
     </svg>`;
   };
-  // Circuit traces behind the sign-in card, a tone lighter and darker than the accent they sit on.
   const authPattern = `<svg class="auth-pattern" aria-hidden="true"><defs><pattern id="auth-traces" width="260" height="260" patternUnits="userSpaceOnUse" patternTransform="rotate(-12)">
       <path d="M-10 56h74l26 26h66l22-22h92M40 270v-66l28-28v-52M176 -10v58l-26 26v64l34 34h86M-10 196h46l24 24" fill="none" stroke="#fff" stroke-opacity=".11" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="M96 150l44-44h54l30 30v48l-34 34h-58z" fill="#000" fill-opacity=".09"/><path d="M-30 110l40-34 44 16 8 40-36 30-46-10z" fill="#fff" fill-opacity=".06"/>
@@ -3764,7 +3677,6 @@ Authorization: Bearer &lt;token&gt;
     theme.apply();
     const { path, params } = hashRoute();
     try {
-      // Links from emails work whether or not someone is signed in on this browser.
       if (PUBLIC_ROUTES.has(path)) return await tokenScreen(path, params.get('token') || '');
       const s = await api('/auth/state');
       state.user = s.user;

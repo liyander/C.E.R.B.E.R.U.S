@@ -94,7 +94,6 @@
 :root[data-theme=dark][data-accent=violet] { --accent: #8b5cf6; --accent-hover: #9b72f8; --accent-deep: #b79cff; --accent-soft: rgba(139, 92, 246, .2); --accent-line: rgba(167, 139, 250, .45); --accent-text: #c4b5fd; }
 
 * { box-sizing: border-box; }
-/* Scrollbars stay out of the way: invisible until the pointer is over the area, then a slim thumb. */
 * { scrollbar-width: thin; scrollbar-color: transparent transparent; }
 *:hover { scrollbar-color: var(--line-strong) transparent; }
 @supports not (scrollbar-width: thin) {
@@ -120,7 +119,6 @@ code, pre, .mono { font-family: var(--mono); font-size: 13px; }
 .boot { padding: 80px; text-align: center; color: var(--muted); }
 [hidden] { display: none !important; }
 
-/* ---------- shell ---------- */
 .shell { display: grid; grid-template-columns: 280px 1fr; height: 100vh; transition: grid-template-columns .18s; }
 @font-face { font-family: "Barlow Condensed"; src: url("/static/fonts/BarlowCondensed-SemiBold.ttf") format("truetype"); font-weight: 600; font-display: swap; }
 .sidebar { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
@@ -192,7 +190,6 @@ code, pre, .mono { font-family: var(--mono); font-size: 13px; }
 .crumb { color: var(--muted); font-size: 14px; margin-bottom: 10px; display: flex; gap: 6px; align-items: center; }
 .crumb a:hover { color: var(--text); text-decoration: underline; }
 
-/* ---------- controls ---------- */
 .btn { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--surface); color: var(--text); font: inherit; font-weight: 500; cursor: pointer; box-shadow: var(--shadow); white-space: nowrap; transition: background .12s, border-color .12s; }
 .btn:hover { background: var(--hover); }
 .btn:disabled { opacity: .55; cursor: default; }
@@ -222,7 +219,6 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 5px; }
 .tabs a:hover { color: var(--text); }
 .tabs a.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
 
-/* ---------- surfaces ---------- */
 .card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
 .tile { transition: border-color .12s, transform .12s; }
 .tile:hover { border-color: var(--accent-line); transform: translateY(-2px); }
@@ -259,7 +255,6 @@ td.wrap.narrow { min-width: 150px; }
 .logline.open { display: block; }
 .nowrap { white-space: nowrap; }
 
-/* ---------- overview ---------- */
 .hero { text-align: center; padding: 26px 24px 22px; border-radius: 18px; background: radial-gradient(ellipse 70% 90% at 50% 0%, var(--accent-soft), transparent 70%); }
 .pill { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line-strong); border-radius: 999px; padding: 6px 16px; font-weight: 500; box-shadow: var(--shadow); background: var(--surface); }
 .pill:hover { background: var(--hover); }
@@ -516,7 +511,6 @@ a.hbar:hover { background: var(--hover); }
 .section-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 0 0 12px; flex-wrap: wrap; }
 .section-head h2 { font-size: 18px; }
 
-/* ---------- console ---------- */
 .chat-wrap { display: grid; grid-template-columns: 264px 1fr; height: 100%; position: relative; }
 .chat-wrap.no-history { grid-template-columns: 1fr; }
 .chat-wrap.no-history .history { display: none; }
@@ -600,7 +594,6 @@ details.trace[open] summary { margin-bottom: 8px; }
 .chip:hover { background: var(--accent-soft); border-color: var(--accent-line); }
 .toolchips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 18px; }
 
-/* ---------- misc ---------- */
 .timeline { padding: 4px 20px 16px; }
 .tl-item { display: grid; grid-template-columns: 128px 22px 1fr; gap: 0 10px; }
 .tl-time { text-align: right; font-size: 13.500px; padding-top: 1px; white-space: nowrap; }
@@ -816,7 +809,6 @@ a.initial:hover { filter: brightness(1.1); }
   * { animation-duration: .01ms !important; transition: none !important; scroll-behavior: auto !important; }
 }
 
-/* ---------- application switcher and workspaces ---------- */
 .btn.app-btn { gap: 8px; font-weight: 600; border: 1px solid var(--line-strong); background: var(--surface); padding: 6px 9px 6px 11px; margin-right: 10px; flex: none; }
 .top-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .app-btn > svg:last-child { transform: rotate(180deg); color: var(--muted); }
@@ -865,7 +857,6 @@ tr.open td { background: var(--hover); }
 @media (max-width: 900px) { .app-stats { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 640px) { .app-btn #app-name { display: none; } .btn.app-btn { margin-right: 4px; } .app-filters select { max-width: none; } }
 
-/* ---------- dashboards drawn from an application: line charts ---------- */
 :root { --cat-1: #2a78d6; --cat-2: #d9730d; --cat-3: #0f9d8a; --cat-4: #c2478a; --cat-5: #7a5ad6; --cat-6: #9a8300; --cat-7: #d14343; --cat-8: #6b7785; }
 :root[data-theme=dark] { --cat-1: #5a9cf0; --cat-2: #f0974a; --cat-3: #3fc4b0; --cat-4: #e27fb4; --cat-5: #a48cf0; --cat-6: #d2bb3c; --cat-7: #f07878; --cat-8: #a3aebb; }
 .app-grid > .wide { grid-column: 1 / -1; }
@@ -891,7 +882,6 @@ tr.open td { background: var(--hover); }
 .app-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 900px) { .app-grid.two { grid-template-columns: minmax(0, 1fr); } }
 
-/* ---------- dashboards on a 24-column grid, icons with their own colour, labelled filters ---------- */
 .nav-ico { flex: none; display: grid; place-items: center; width: 24px; height: 24px; margin: -3px -3px -3px -3px; border-radius: 7px; background: color-mix(in srgb, var(--c) 16%, transparent); font-style: normal; }
 .nav a .nav-ico svg, .nav a:hover .nav-ico svg, .nav a.active .nav-ico svg, .nav-ico svg { color: var(--c); }
 .nav-ico.big { width: 40px; height: 40px; border-radius: 11px; margin: 0; }
@@ -944,7 +934,6 @@ tr.open td { background: var(--hover); }
 .d2 .dtile b { font-size: 18px; }
 @media (min-width: 901px) { .shell.rail .nav-ico { margin: 0; } }
 
-/* ---------- application pages: icon tiles, split bars, tables with their title inside ---------- */
 .app-stats .stat { gap: 14px; }
 .app-stats .stat .grow { flex: 1; min-width: 0; }
 .app-stats .stat span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -974,7 +963,6 @@ tr.open td { background: var(--hover); }
 .app-grid { margin-bottom: 0; }
 .app-stats { margin-bottom: 18px; }
 
-/* ---------- nothing may push the page sideways: charts stay inside their card until they are redrawn ---------- */
 .content { overflow-x: hidden; }
 .lchart { overflow: hidden; }
 .lchart svg { width: 100%; height: 100%; }
@@ -985,9 +973,7 @@ tr.open td { background: var(--hover); }
 .page-head h1 { min-width: 0; overflow-wrap: anywhere; }
 .page-head h1 .nav-ico { flex: none; }
 
-/* ================= polish layer: full-width pages, content-width responsiveness, quiet professional styling, glass, loading ================= */
 
-/* ---- tokens ---- */
 :root {
   --radius: 10px;
   --shadow: 0 1px 2px rgba(16, 24, 40, .05);
@@ -1015,7 +1001,6 @@ tr.open td { background: var(--hover); }
   --line-strong: rgba(255, 255, 255, .16);
 }
 
-/* ---- glass: the page sits on a soft glow; everything that floats above it is frosted ---- */
 body { background: radial-gradient(1100px 520px at 88% -8%, var(--glow-1), transparent 70%), radial-gradient(900px 480px at 12% -12%, var(--glow-2), transparent 70%), var(--bg); background-attachment: fixed; }
 .sidebar { background: var(--glass); border-right-color: var(--glass-line); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
 .main { position: relative; }
@@ -1036,7 +1021,6 @@ dialog.palette::backdrop, dialog.modal::backdrop { background: rgba(8, 10, 12, .
   .pop, .lc-tip, dialog.palette, dialog.modal, .drawer-panel, .pop-head, .dtable th { background: var(--surface); }
 }
 
-/* ---- pages use the whole width, and respond to the width they actually have ---- */
 .content { container: view / inline-size; }
 .page, .page.wide { max-width: none; padding: 26px 28px 56px; }
 .page-head { margin-bottom: 16px; align-items: center; }
@@ -1054,7 +1038,6 @@ dialog.palette::backdrop, dialog.modal::backdrop { background: rgba(8, 10, 12, .
 }
 @container view (max-width: 460px) { .stats, .app-stats { grid-template-columns: minmax(0, 1fr); } }
 
-/* the dashboard grid: Grafana's exact 24 columns only when there is room for them */
 .dash-grid { grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-rows: auto; gap: 12px; }
 .dcell { grid-column: span 12; }
 .dcell.d2 { grid-column: span 2; } .dcell.d3 { grid-column: span 3; } .dcell.d4 { grid-column: span 4; } .dcell.d6 { grid-column: span 6; }
@@ -1075,7 +1058,6 @@ dialog.palette::backdrop, dialog.modal::backdrop { background: rgba(8, 10, 12, .
 }
 @container view (max-width: 520px) { .dcell.d2 { grid-column: span 6; } .dcell.d3, .dcell.d4 { grid-column: span 12; } }
 
-/* ---- headline numbers: one calm, fixed shape ---- */
 .app-stats { gap: 14px; margin: 14px 0 16px; }
 .stat.kpi { display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 14px 16px 15px; min-height: 104px; min-width: 0; }
 .stat.kpi:hover { transform: none; border-color: var(--line-strong); }
@@ -1089,13 +1071,11 @@ dialog.palette::backdrop, dialog.modal::backdrop { background: rgba(8, 10, 12, .
 .stat.kpi.t-ok b { color: var(--text); }
 .stat.kpi.t-ok .ico { background: var(--ok-soft); color: var(--ok); }
 
-/* ---- filters as one quiet toolbar ---- */
 .app-filters { margin: 0 0 4px; padding: 10px 12px; border: 1px solid var(--glass-line); border-radius: var(--radius); gap: 10px; align-items: flex-end; }
 .fl > span { font-size: 11px; letter-spacing: .04em; }
 .app-filters select, .app-filters input[type=text] { padding: 6px 10px; font-size: 14px; border-radius: 8px; height: 34px; }
 .app-filters .btn { height: 34px; padding: 0 14px; box-shadow: none; }
 
-/* ---- cards, charts, bars, tables: smaller titles, thinner marks, more air ---- */
 .card-pad { padding: 16px 18px 18px; }
 .card-pad > h2, .app-grid h2, .lc-card h2, .segs h2, .page-table .section-head h2, .section-head h2 { font-size: 14.5px; font-weight: 600; letter-spacing: 0; }
 .app-grid { gap: 14px; margin-top: 14px; }
@@ -1116,7 +1096,6 @@ tr.clickable:hover td { background: color-mix(in srgb, var(--hover) 70%, transpa
 .badge { font-weight: 500; }
 .detail-row td { background: color-mix(in srgb, var(--hover) 45%, transparent); }
 
-/* ---- loading: a branded start screen, a page outline while data arrives, a thin progress line ---- */
 .boot { min-height: 100vh; display: grid; place-items: center; padding: 24px; color: var(--text); }
 .boot-card { display: flex; flex-direction: column; align-items: center; gap: 14px; width: min(320px, 86vw); text-align: center; animation: bootin .35s ease-out; }
 .boot-mark { width: 74px; color: var(--accent-deep); animation: bootpulse 1.8s ease-in-out infinite; }
@@ -1141,13 +1120,10 @@ tr.clickable:hover td { background: color-mix(in srgb, var(--hover) 70%, transpa
 @container view (max-width: 980px) { .sk-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sk-row.two { grid-template-columns: minmax(0, 1fr); } }
 @media (prefers-reduced-motion: reduce) { .boot-mark, .boot-bar i, .skeleton .sk, .shell.loading .topbar::after { animation: none; } }
 
-/* menus and tooltips sit inside other frosted bars, where a second blur cannot see the page: keep them nearly solid so nothing reads through */
 :root { --glass-strong: rgba(255, 255, 255, .96); }
 :root[data-theme=dark] { --glass-strong: rgba(27, 28, 30, .96); }
-/* the start screen appears before the saved theme is known: follow the system setting until then */
 @media (prefers-color-scheme: dark) { :root:not([data-theme]) { --bg: #121314; --text: #ededed; --muted: #a3a3a3; --hover: #2a2a2a; --accent-deep: #2dd4bf; --glow-1: rgba(45, 212, 191, .08); --glow-2: rgba(14, 165, 233, .06); color-scheme: dark; } }
 
-/* ================= sign-in: a split card on a bold patterned field, with a security poster on the right ================= */
 .auth {
   --text: #101214; --muted: #5d646c; --line: #dfe2e6; --line-strong: #c6cacf; --surface: #ffffff; --hover: #eef0f2; --panel: #f6f7f8;
   --info: #1f5fbf; --bad: #c62828; --warn: #a15c00; --warn-soft: #fff4d6; --bad-soft: #fdecec;
@@ -1199,13 +1175,11 @@ tr.clickable:hover td { background: color-mix(in srgb, var(--hover) 70%, transpa
 }
 @media (prefers-reduced-motion: reduce) { .art-spin, .art-float { animation: none; } }
 
-/* ---------- AI answers inside pages and rows ---------- */
 #ai-insight:not(:empty) { margin-bottom: 14px; }
 .detail-actions { gap: 14px; margin: 8px 0 2px; }
 .ai-slot:not(:empty) { margin-top: 10px; max-width: 110ch; white-space: normal; }
 .ai-slot .ai-card { box-shadow: none; }
 
-/* ---------- tag a row, then discuss it with the AI ---------- */
 .tagcol { width: 34px; padding: 0 8px 0 0 !important; text-align: right; vertical-align: middle !important; }
 .tagbtn { border: 1px solid transparent; background: none; color: var(--muted); border-radius: 7px; width: 26px; height: 26px; display: inline-grid; place-items: center; cursor: pointer; opacity: .32; transition: opacity .12s, background .12s, color .12s; }
 tr:hover .tagbtn, .logrow:hover .tagbtn, .frow:hover .tagbtn, .tagbtn:focus-visible { opacity: 1; }
@@ -1239,7 +1213,6 @@ tr:hover .tagbtn, .logrow:hover .tagbtn, .frow:hover .tagbtn, .tagbtn:focus-visi
 .talk-form textarea { flex: 1; resize: none; min-height: 44px; max-height: 140px; }
 @media (max-width: 640px) { #tag-tray { bottom: 12px; } .tagbtn { opacity: .7; } }
 
-/* ---------- @ in the chat ---------- */
 .mention-host { position: relative; }
 .mention-pop { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 50; width: min(380px, 92vw); padding: 6px; border-radius: 12px;
   background: var(--glass-strong); border: 1px solid var(--glass-line); box-shadow: var(--shadow-lg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
@@ -1256,7 +1229,6 @@ tr:hover .tagbtn, .logrow:hover .tagbtn, .frow:hover .tagbtn, .tagbtn:focus-visi
 .talk-msg .working { display: flex; align-items: center; gap: 10px; }
 .talk-msg .working .btn { margin-left: auto; }
 
-/* ---------- cross-source pages ---------- */
 a.ip-link { color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; }
 a.ip-link:hover { color: var(--accent); }
 .report-preview { max-height: 70vh; overflow: auto; }
@@ -1264,7 +1236,6 @@ a.ip-link:hover { color: var(--accent); }
 
 .page-text { margin-bottom: 16px; }
 
-/* ---------- server commands ---------- */
 .cmd-card { border: 1px solid var(--line-strong); border-left: 3px solid var(--sev-medium, #d97706); border-radius: 10px; padding: 12px 14px; margin: 10px 0; background: var(--surface-2, rgba(127,127,127,.06)); }
 .cmd-card.risk-read-only { border-left-color: var(--ok, #16a34a); }
 .cmd-card.risk-disruptive { border-left-color: var(--sev-critical, #dc2626); }
@@ -1274,7 +1245,6 @@ a.ip-link:hover { color: var(--accent); }
 .cmd-meta { margin: -4px 0 12px 4px; }
 
 
-/* ---------- servers ---------- */
 .srv-switch { display: flex; align-items: center; gap: 16px; padding: 16px 20px; margin-bottom: 18px; }
 .srv-switch-ico { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; flex: none; background: var(--ok-soft); color: var(--ok); }
 .srv-switch.off .srv-switch-ico { background: var(--hover); color: var(--muted); }
@@ -1364,7 +1334,6 @@ a.ip-link:hover { color: var(--accent); }
 .card.srv-savebar { background: var(--surface) !important; backdrop-filter: none; -webkit-backdrop-filter: none; border: 1px solid var(--line-strong); }
 
 
-/* ---------- main dashboard ---------- */
 .threat-hero { display: grid; grid-template-columns: auto 1fr; gap: 28px; align-items: center; padding: 22px 26px; margin-bottom: 18px; border-left: 4px solid var(--ok); }
 .threat-hero.t-low { border-left-color: var(--info); } .threat-hero.t-medium { border-left-color: var(--warn); }
 .threat-hero.t-high { border-left-color: var(--high); } .threat-hero.t-critical { border-left-color: var(--bad); }
@@ -1403,7 +1372,6 @@ a.ip-link:hover { color: var(--accent); }
 .vital footer { display: flex; align-items: center; gap: 4px; padding: 9px 16px; font-size: 12.5px; font-weight: 600; color: var(--accent-text); border-top: 1px solid var(--line); }
 .vital footer svg { transform: rotate(-90deg); }
 
-/* ---------- threat alert rules ---------- */
 .rule-list { display: grid; gap: 14px; margin-bottom: 18px; }
 .rule-card { padding: 0; }
 .rule-card.off { opacity: .7; }
@@ -1437,7 +1405,6 @@ a.ip-link:hover { color: var(--accent); }
 @media (max-width: 700px) { .threat-hero { grid-template-columns: 1fr; } .threat-ring { justify-content: center; } }
 
 
-/* ---------- incident queue & triage ---------- */
 .q-filters { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
 .chip.sm { padding: 3px 10px; font-size: 12px; }
 .q-table td { vertical-align: middle; }
@@ -1474,7 +1441,6 @@ a.ip-link:hover { color: var(--accent); }
 @media (max-width: 640px) { .resp-grid { grid-template-columns: 1fr; } .pb { grid-template-columns: 100px 1fr 40px; } }
 
 
-/* ---------- incident response & playbook ---------- */
 .acts { display: grid; gap: 8px; }
 .act-row { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .act-text { min-width: 0; }
@@ -1497,7 +1463,6 @@ li.pb-step > span { display: inline-block; margin-bottom: 6px; }
 @media (max-width: 640px) { .act-row { flex-direction: column; align-items: stretch; } .act-do { justify-content: flex-end; } }
 
 
-/* ---------- asset register & suppression ---------- */
 .asset-row select { max-width: 130px; }
 .asset-row[data-href] { cursor: default; }
 .supp-rule { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
